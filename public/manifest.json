@@ -1,0 +1,19 @@
+{
+  "name": "Leg Growth Weekly Tracker",
+  "short_name": "Leg Tracker",
+  "description": "Track weekly leg workouts, PRs, readiness, progression, notes, logs, and rest timers.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#07120f",
+  "theme_color": "#07120f",
+  "icons": [
+    {
+      "src": "/pwa-icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
