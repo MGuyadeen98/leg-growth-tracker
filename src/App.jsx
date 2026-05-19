@@ -141,6 +141,14 @@ const createSessionId = (dateKey, day, instance = 1) =>
 
 const createCompletionKey = (dateKey, day) => `${dateKey}:${day}`
 
+const clampFocusIndexForDay = (day, idx) => {
+  const exercises = weeklyPlan[day]?.exercises || []
+  if (!exercises.length) return 0
+  return Math.min(exercises.length - 1, Math.max(0, Number(idx) || 0))
+}
+
+const getFocusForDay = (focusByDay, day) => clampFocusIndexForDay(day, focusByDay?.[day] ?? 0)
+
 const createTimer = (duration) => ({
   duration,
   status: 'idle',
@@ -197,6 +205,8 @@ function normalizeStoredState(stored = {}) {
     completedWorkoutKeys: stored.completedWorkoutKeys || {},
     nextTargets: stored.nextTargets || {},
     progressionDecisions: Array.isArray(stored.progressionDecisions) ? stored.progressionDecisions : [],
+    dismissedBriefings: stored.dismissedBriefings || {},
+    focusByDay: stored.focusByDay || { [day]: 0 },
   }
 }
 
@@ -312,7 +322,9 @@ function normalizeCompletedSession(session) {
     topPerformance: safeSession.topPerformance || 'No top set logged yet.',
     formFlags: Array.isArray(safeSession.formFlags) ? safeSession.formFlags.filter(Boolean) : [],
     sprintNotes: Array.isArray(safeSession.sprintNotes) ? safeSession.sprintNotes.filter(Boolean) : [],
-    coachRecommendations: Array.isArray(safeSession.coachRecommendations) ? safeSession.coachRecommendations.filter(Boolean) : [],
+    coachRecommendations: Array.isArray(safeSession.coachRecommendations) ? safeSession.coachRecommendations.filter(Boolean).map((item) => (
+      typeof item === 'string' ? { label: 'Coach note', labelClass: 'technical', text: item } : item
+    )) : [],
   }
 }
 
@@ -354,6 +366,99 @@ const buildPreviousResultText = (entry) => {
   const top = getTopLoggedSet(entry)
   if (!top) return 'Logged without complete set data.'
   return `${top.weight} x ${top.reps}${top.rir !== null ? ` @ ${top.rir} RIR` : ''}`
+}
+
+const formatLoadTarget = (load, exercise) => {
+  if (!load) return exercise.load || exercise.reps
+  const name = String(exercise.name || '').toLowerCase()
+  if (name.includes('db')) return `${load}s`
+  return `${load} lb`
+}
+
+const getSetCompletionSummary = (entry, exercise) => {
+  const targetReps = getTargetReps(exercise)
+  const sets = (entry.sets || []).filter((set) => parseNumber(set.reps) !== null)
+  const topRepSets = sets.filter((set) => (parseNumber(set.reps) || 0) >= targetReps.high).length
+  const rirs = sets.map((set) => parseNumber(set.rir)).filter((value) => value !== null)
+  const avgRir = rirs.length ? rirs.reduce((sum, rir) => sum + rir, 0) / rirs.length : null
+  const lowRirSets = rirs.filter((rir) => rir <= 1).length
+  return {
+    loggedSets: sets.length,
+    plannedSets: exercise.sets || 1,
+    topRepSets,
+    targetTopReps: targetReps.high,
+    avgRir,
+    lowRirSets,
+    incomplete: sets.length < (exercise.sets || 1),
+  }
+}
+
+const buildProgressionPrescription = ({ decision, exercise, blocker, unlockCondition }) => {
+  if (decision.type === 'sprint') return `${decision.exercise}: ${decision.suggestedTarget}. ${unlockCondition || blocker || decision.reason}`
+  const loadText = formatLoadTarget(decision.targetLoad, exercise)
+  const target = decision.targetLoad ? `${loadText} x ${exercise.reps}` : decision.suggestedTarget
+  return `${decision.exercise}: Repeat ${target}. ${blocker} ${unlockCondition}`
+}
+
+const buildTodayProgressionTargets = (exercises, getExerciseTarget) => exercises
+  .filter((exercise) => isLoadBasedType(getActivityType(exercise)))
+  .map((exercise) => {
+    const target = getExerciseTarget(exercise)
+    const targetReps = getTargetReps(exercise)
+    const loadText = target.load ? formatLoadTarget(target.load, exercise) : exercise.load || 'prescribed load'
+    const priorFlag = target.decision && /hold|reduce|block/i.test(target.decision)
+    const standard = `${exercise.name}: Today: ${loadText} x ${exercise.reps}.`
+
+    if (priorFlag && /stability|coordination|asymmetry|form|pain/i.test(`${target.reason} ${target.decision}`)) {
+      return `${standard} Priority: clear the prior flag before increasing load.`
+    }
+
+    if (String(exercise.name).toLowerCase().includes('db press')) {
+      return `${standard} Earn progression by hitting all ${exercise.sets} sets at ${targetReps.high} reps with balanced lockout.`
+    }
+
+    return `${standard} Earn progression by hitting all ${exercise.sets} sets at ${targetReps.high} reps with 1-2 RIR and no form flags.`
+  })
+
+const getWorkoutState = ({ sessionTimer, sessionLogs, currentCompletionSummary, isTodayCompleted }) => {
+  if (currentCompletionSummary || isTodayCompleted) return 'completed'
+  if (sessionTimer.status === 'running' || sessionTimer.status === 'paused' || sessionLogs.length > 0) return 'inProgress'
+  return 'notStarted'
+}
+
+const shouldShowNextTimeProgression = (workoutState) => workoutState === 'completed' || workoutState === 'viewingHistory'
+
+const getStartButtonClass = (workoutState) =>
+  workoutState === 'notStarted' ? 'button primary pulse-start' : 'button primary'
+
+const shouldConfirmDaySwitch = ({ currentDay, targetDay, sessionTimer, sessionLogs, currentCompletionSummary }) =>
+  currentDay !== targetDay
+  && !currentCompletionSummary
+  && (sessionTimer.status === 'running' || sessionTimer.status === 'paused' || sessionLogs.length > 0)
+
+const buildFreshTrackerState = ({ prs = defaultPRs, keepPrs = false, dateKey = getTodayKey() } = {}) => {
+  const schedule = getScheduledDayInfo(dateKey)
+  const nextDay = schedule.nextDay
+  return {
+    prs: keepPrs ? prs : defaultPRs,
+    day: nextDay,
+    workoutDate: dateKey,
+    sessionInstance: 1,
+    completed: {},
+    setDrafts: {},
+    sessionLog: [],
+    completedSessions: [],
+    completedWorkoutKeys: {},
+    nextTargets: {},
+    progressionDecisions: [],
+    dismissedBriefings: {},
+    readiness: 'good',
+    restTimers: {},
+    alertedRestTimers: {},
+    sessionTimer: createTimer(50 * 60),
+    suggestionStatus: {},
+    focusByDay: { [nextDay]: 0 },
+  }
 }
 
 const getPerformanceTrend = (exerciseName, history) => {
@@ -415,6 +520,7 @@ const createProgressionDecision = ({ entry, exercise, readiness, history, fallba
   const targetReps = getTargetReps(exercise)
   const topSet = getTopLoggedSet(entry)
   const usableSets = (entry.sets || []).filter((set) => parseNumber(set.reps) !== null)
+  const setSummary = getSetCompletionSummary(entry, exercise)
   const allTopReps = usableSets.length >= (exercise.sets || 1) && usableSets.every((set) => (parseNumber(set.reps) || 0) >= targetReps.high)
   const allRirClean = usableSets.length > 0 && usableSets.every((set) => (parseNumber(set.rir) ?? 2) >= 2)
   const nearLimit = usableSets.some((set) => (parseNumber(set.rir) ?? 2) <= 1)
@@ -424,41 +530,63 @@ const createProgressionDecision = ({ entry, exercise, readiness, history, fallba
   let reason = 'Build cleaner reps before adding load.'
   let targetLoad = baseLoad
   let suggestedTarget = baseLoad ? `${baseLoad} lb x ${exercise.reps}` : exercise.load || exercise.reps
+  let blocker = setSummary.incomplete
+    ? `Progression held because only ${setSummary.loggedSets}/${setSummary.plannedSets} sets had logged rep data.`
+    : `Hold because only ${setSummary.topRepSets}/${setSummary.plannedSets} sets reached ${setSummary.targetTopReps} reps.`
+  let unlockCondition = `Progress when all ${setSummary.plannedSets} sets reach ${setSummary.targetTopReps} reps with 1-2 RIR and no form flags.`
 
   if (hasPain) {
     decision = 'Block progression'
     targetLoad = reduceLoad(baseLoad, 0.9)
-    reason = 'Pain was detected, so load progression is paused.'
+    blocker = 'Progression blocked because pain was flagged.'
+    unlockCondition = 'Resume progression only after the movement is pain-free for a full session.'
+    reason = `${blocker} ${unlockCondition}`
     suggestedTarget = targetLoad ? `${targetLoad} lb with reduced range if needed` : 'Reduce range or swap movement if pain remains.'
   } else if (hasFormIssue) {
     decision = 'Hold or reduce target'
     targetLoad = reduceLoad(baseLoad, 0.95)
-    reason = `${formIssues[0].issue} was detected; clean mechanics matter more than adding load.`
+    blocker = `Hold load because ${formIssues[0].label.toLowerCase()} was flagged.`
+    unlockCondition = `Progress only after ${formIssues[0].label.toLowerCase()} clears for a full session.`
+    reason = `${blocker} ${unlockCondition}`
     suggestedTarget = targetLoad ? `${targetLoad} lb x ${exercise.reps}` : 'Hold load and add tempo/control.'
   } else if (highFatigue || trend === 'declining') {
     decision = 'Hold target'
     targetLoad = baseLoad
-    reason = highFatigue ? 'Readiness or fatigue was not good enough to justify loading up.' : 'Performance has declined across recent exposures.'
+    blocker = highFatigue ? 'Hold because readiness or fatigue limited the session.' : 'Hold because performance declined across recent exposures.'
+    unlockCondition = `Progress when output rebounds and all ${setSummary.plannedSets} sets meet the top of the range with 1-2 RIR.`
+    reason = `${blocker} ${unlockCondition}`
     suggestedTarget = baseLoad ? `${baseLoad} lb x ${exercise.reps}` : exercise.load || exercise.reps
   } else if (type === 'accessory') {
     if (allTopReps && allRirClean) {
       decision = 'Progress accessory load slightly'
       targetLoad = baseLoad ? baseLoad + jump : null
-      reason = 'You reached the top of the rep range cleanly, so a small load bump is appropriate.'
+      blocker = `All ${setSummary.plannedSets} sets reached ${setSummary.targetTopReps} reps with enough reserve.`
+      unlockCondition = 'Use the small load increase and keep tempo/control clean.'
+      reason = `${blocker} ${unlockCondition}`
       suggestedTarget = targetLoad ? `${targetLoad} lb x ${targetReps.low}-${targetReps.high}` : `Add a small load and stay in ${exercise.reps}`
     } else {
       decision = 'Add reps before load'
-      reason = 'Accessory work should earn load increases through stable reps and clean control first.'
-      suggestedTarget = baseLoad ? `${baseLoad} lb, aim for more clean reps` : `Aim toward ${exercise.reps} with cleaner tempo`
+      blocker = setSummary.incomplete
+        ? `Progression held because set data was incomplete.`
+        : `Hold because only ${setSummary.topRepSets}/${setSummary.plannedSets} sets reached ${setSummary.targetTopReps} reps.`
+      unlockCondition = `Progress when all sets reach ${setSummary.targetTopReps} reps with clean control.`
+      reason = `${blocker} ${unlockCondition}`
+      suggestedTarget = baseLoad ? `${formatLoadTarget(baseLoad, exercise)} x ${exercise.reps}` : `Aim toward ${exercise.reps} with cleaner tempo`
     }
   } else if (allTopReps && allRirClean) {
     decision = 'Increase target load'
     targetLoad = baseLoad ? baseLoad + jump : null
-    reason = `You hit the planned reps cleanly with 2+ RIR, so the target increases by ${jump} lb.`
+    blocker = `All ${setSummary.plannedSets} sets reached ${setSummary.targetTopReps} reps with 2+ RIR.`
+    unlockCondition = `Move up ${jump} lb and keep the same rep standard.`
+    reason = `${blocker} ${unlockCondition}`
     suggestedTarget = targetLoad ? `${targetLoad} lb x ${exercise.reps}` : `Increase moderately for ${exercise.reps}`
   } else if (allTopReps || nearLimit) {
     decision = 'Hold target'
-    reason = nearLimit ? 'You completed the work near the limit, so repeat before adding load.' : 'You completed the work, but not with enough reserve to progress confidently.'
+    blocker = nearLimit
+      ? `Hold because last session was near limit${setSummary.avgRir !== null ? ` (avg RIR ${setSummary.avgRir.toFixed(1)})` : ''}.`
+      : `Hold because the work was completed without enough reserve to progress confidently.`
+    unlockCondition = `Progress when all ${setSummary.plannedSets} sets reach ${setSummary.targetTopReps} reps with 1-2 RIR.`
+    reason = `${blocker} ${unlockCondition}`
     suggestedTarget = baseLoad ? `${baseLoad} lb x ${exercise.reps}` : exercise.reps
   }
 
@@ -471,6 +599,9 @@ const createProgressionDecision = ({ entry, exercise, readiness, history, fallba
     suggestedTarget,
     targetLoad,
     targetReps: exercise.reps,
+    blocker,
+    unlockCondition,
+    setSummary,
     flagsConsidered: flags.map((flag) => flag.issue),
     date: entry.date,
     sessionId: entry.sessionId,
@@ -501,6 +632,9 @@ const buildNextTargets = (decisions) => decisions.reduce((acc, decision) => ({
     suggestedTarget: decision.suggestedTarget,
     reason: decision.reason,
     decision: decision.decision,
+    blocker: decision.blocker,
+    unlockCondition: decision.unlockCondition,
+    setSummary: decision.setSummary,
     previousResult: decision.previousResult,
     flagsConsidered: decision.flagsConsidered || [],
     date: decision.date,
@@ -511,6 +645,53 @@ const buildNextTargets = (decisions) => decisions.reduce((acc, decision) => ({
 const clearObjectPrefix = (object, prefix) => Object.fromEntries(
   Object.entries(object || {}).filter(([key]) => !key.startsWith(prefix)),
 )
+
+const getLastSameDaySession = (completedSessions, day, currentSessionId) =>
+  completedSessions.find((session) => session.day === day && session.sessionId !== currentSessionId) || null
+
+const buildTodayFocus = ({ day, lastSummary, nextTargets }) => {
+  if (!lastSummary) return []
+  const isSprintDay = day === 'Saturday'
+  const focus = []
+
+  if (isSprintDay) {
+    const sprintFlag = lastSummary.sprintNotes?.find((note) => /dropping|fatigue|quality/i.test(note))
+    focus.push(sprintFlag ? 'Keep sprint quality high; stop if mechanics drop.' : 'Keep sprint quality high and use full recovery.')
+    focus.push('Extend rest if speed quality falls before planned reps are complete.')
+    return focus.slice(0, 3)
+  }
+
+  const targetEntries = Object.values(nextTargets || {}).filter((target) => target.type !== 'sprint')
+  const flag = lastSummary.formFlags?.[0]
+  const firstTarget = targetEntries[0]
+
+  if (firstTarget?.unlockCondition) focus.push(firstTarget.unlockCondition.replace(/^Progress when /, 'Earn progression by '))
+  if (flag) focus.push(`Watch: ${flag.exercise} ${flag.label || flag.issue}.`)
+  if (firstTarget?.blocker) focus.push(firstTarget.blocker)
+
+  return focus.slice(0, 3)
+}
+
+const buildSessionBriefing = ({ day, lastSummary, nextTargets }) => {
+  if (!lastSummary) return null
+  const focus = buildTodayFocus({ day, lastSummary, nextTargets })
+  const targets = Object.values(nextTargets || {}).filter((target) => {
+    const exercise = findExerciseByName(target.exercise)
+    return exercise && Object.values(weeklyPlan[day]?.exercises || {}).some((item) => item.name === exercise.name)
+  })
+
+  return {
+    title: day === 'Saturday' ? 'Before Today’s Track Session' : `Last ${day} Briefing`,
+    lastLine: `Last ${day}: ${lastSummary.topPerformance}`,
+    skippedLine: lastSummary.skippedExercises?.length ? `Skipped: ${lastSummary.skippedExercises.join(', ')}` : null,
+    flags: lastSummary.formFlags || [],
+    targets,
+    focus,
+  }
+}
+
+const shouldShowBriefing = ({ briefing, sessionTimer, sessionLogs, isTodayCompleted, dismissedBriefings, briefingKey }) =>
+  Boolean(briefing && sessionTimer.status === 'idle' && sessionLogs.length === 0 && !isTodayCompleted && !dismissedBriefings[briefingKey])
 
 const getDraftForExercise = (draft, exercise, workingWeight) => ({
   sets: draft?.sets?.length ? draft.sets : buildDefaultSets(exercise, workingWeight),
@@ -649,9 +830,13 @@ const buildCompletedSessionSummary = ({ logs, plan, completed, day, sessionId, w
     completedExercises,
     skippedExercises: skipped.map((exercise) => exercise.name),
     topPerformance: getTopPerformance(normalizedLogs),
-    formFlags: formFlags.map((flag) => ({ exercise: flag.exercise, issue: flag.issue, text: flag.text })),
+    formFlags: formFlags.map((flag) => ({ exercise: flag.exercise, issue: flag.issue, label: flag.label, severity: flag.severity, text: flag.text })),
     sprintNotes,
-    coachRecommendations: [...coach.progression, ...coach.form].slice(0, 4).map((item) => item.text),
+    coachRecommendations: [...coach.form, ...coach.progression].slice(0, 4).map((item) => ({
+      label: item.label || (item.type === 'progression' ? 'Next target' : 'Coach note'),
+      labelClass: item.labelClass || 'technical',
+      text: item.text,
+    })),
   }
 }
 
@@ -916,20 +1101,21 @@ function ExposureChart({ card, metric, height = 128, onSelectPoint }) {
 }
 
 const NOTE_PATTERNS = [
-  { issue: 'tilt', match: /\btilt|leans?|shift\b/i, category: 'stability' },
+  { issue: 'minor coordination', match: /slight|minor|familiar|new movement|getting used|will get better/i, category: 'coordination' },
+  { issue: 'asymmetry', match: /imbalance|left.?right|one side|uneven|asymmetr/i, category: 'asymmetry' },
+  { issue: 'tilt', match: /\btilt|leans?|shift|collapse/i, category: 'stability' },
   { issue: 'knee cave', match: /knee\s*cav|valgus/i, category: 'knee' },
-  { issue: 'knee pain', match: /knee\s*pain|pain.*knee/i, category: 'pain' },
-  { issue: 'hip pain', match: /hip\s*pain|pain.*hip/i, category: 'pain' },
-  { issue: 'back pain', match: /back\s*pain|low\s*back|lower\s*back/i, category: 'back' },
+  { issue: 'pain', match: /sharp pain|pain|pinch|tweak|hurt/i, category: 'pain' },
+  { issue: 'low back takeover', match: /low\s*back.*taking over|lower\s*back.*taking over|back.*taking over|low\s*back|lower\s*back/i, category: 'technique' },
   { issue: 'unstable', match: /unstable|balance|shaky/i, category: 'stability' },
-  { issue: 'slow grind', match: /slow|grind/i, category: 'effort' },
-  { issue: 'soreness', match: /sore|tight/i, category: 'readiness' },
-  { issue: 'fatigue', match: /fatigue|tired|gassed/i, category: 'fatigue' },
+  { issue: 'slow grind', match: /slow|grind/i, category: 'technique' },
+  { issue: 'mobility limitation', match: /mobility|range|depth|tight|restricted/i, category: 'mobility' },
+  { issue: 'fatigue', match: /fatigue|tired|gassed|sore/i, category: 'fatigue' },
   { issue: 'speed drop', match: /speed\s*drop|slowed|drop.?off/i, category: 'sprint' },
-  { issue: 'hamstring', match: /hamstring/i, category: 'tissue' },
-  { issue: 'quad', match: /quad/i, category: 'tissue' },
-  { issue: 'glute', match: /glute/i, category: 'tissue' },
-  { issue: 'ankle', match: /ankle/i, category: 'joint' },
+  { issue: 'hamstring flag', match: /hamstring/i, category: 'tissue' },
+  { issue: 'quad flag', match: /quad/i, category: 'tissue' },
+  { issue: 'glute flag', match: /glute/i, category: 'tissue' },
+  { issue: 'ankle flag', match: /ankle/i, category: 'joint' },
 ]
 
 const uniqueBy = (items, keyFn) => {
@@ -956,40 +1142,157 @@ const scanCoachSignals = (text) => {
   }))
 }
 
-const getCueForIssue = (entry, signal) => {
-  const name = String(entry.exercise || '').toLowerCase()
-  if (signal.issue === 'knee cave') return 'Focus on tracking knees over toes and add banded lateral walks or tempo goblet squats before squatting.'
-  if (signal.category === 'back') return 'Shorten the range slightly, brace before the descent, and emphasize hamstrings instead of chasing depth.'
-  if (signal.category === 'stability' && name.includes('bulgarian')) return 'Add 1-2 bodyweight split squat warm-up sets with a 2-second pause. Keep ribs stacked over pelvis and use a slower eccentric.'
-  if (signal.category === 'stability') return 'Use a slower eccentric, pause in the hardest position, and keep the rep path balanced before adding load.'
-  if (signal.category === 'sprint') return 'Stop the session earlier or increase rest. Quality is more important than volume.'
-  if (signal.category === 'fatigue') return 'Reduce volume by 1-2 reps next week or extend rest intervals.'
-  if (signal.category === 'pain') return 'Do not push through pain. Reduce load or range and keep the next exposure technically clean.'
-  return 'Hold progression until the note clears up for a session.'
+const getInsightLabelClass = (severity, category) => {
+  if (severity === 'high' || category === 'pain') return 'danger'
+  if (['stability', 'fatigue', 'sprint', 'technique', 'mobility', 'knee'].includes(category)) return 'caution'
+  if (['coordination', 'asymmetry'].includes(category)) return 'technical'
+  return 'positive'
 }
+
+const makeCoachingText = ({ decision, cue, why }) => `Decision: ${decision} Cue: ${cue} Why: ${why}`
+
+const classifyCoachNote = (entry) => {
+  const text = getEntryNotes(entry)
+  const lower = text.toLowerCase()
+  const signals = uniqueBy(scanCoachSignals(text), (signal) => signal.issue)
+  if (!signals.length) return []
+
+  const name = String(entry.exercise || '').toLowerCase()
+  const hasPain = signals.some((signal) => signal.category === 'pain')
+  const hasSlight = /slight|minor|little|familiar|will get better|getting used/i.test(text)
+  const hasSignificant = /significant|severe|major|sharp|painful|collapse/i.test(text)
+  const results = []
+
+  if (hasPain) {
+    results.push({
+      issue: 'pain',
+      category: 'pain',
+      label: 'Pain flag',
+      severity: 'high',
+      decision: 'Do not progress load.',
+      cue: 'Reduce range or load, and swap the movement if pain repeats.',
+      why: 'Pain changes the goal from overload to risk management.',
+    })
+    return results
+  }
+
+  if ((signals.some((signal) => signal.category === 'coordination' || signal.category === 'asymmetry') || /imbalance|uneven/.test(lower)) && name.includes('db press')) {
+    results.push({
+      issue: 'minor coordination',
+      category: 'coordination',
+      label: hasSlight ? 'Minor coordination' : 'Asymmetry detected',
+      severity: hasSlight ? 'low' : 'moderate',
+      decision: 'Hold the load for one more exposure.',
+      cue: 'Match both DBs through the top half and finish with even lockout speed.',
+      why: 'This sounds like press-path familiarity, not a strength failure.',
+    })
+    return results
+  }
+
+  if (name.includes('bulgarian') && signals.some((signal) => signal.category === 'stability')) {
+    results.push({
+      issue: 'single-leg stability',
+      category: 'stability',
+      label: 'Stability issue',
+      severity: hasSignificant ? 'moderate' : 'low',
+      decision: 'Hold the load.',
+      cue: 'Add paused bodyweight split squats before loading and keep ribs stacked over pelvis.',
+      why: 'A torso tilt usually means pelvic control or single-leg stability is limiting the set.',
+    })
+    return results
+  }
+
+  if ((name.includes('rdl') || name.includes('romanian')) && signals.some((signal) => signal.category === 'technique' || signal.category === 'fatigue')) {
+    results.push({
+      issue: 'hinge takeover',
+      category: 'technique',
+      label: 'Technique limiter',
+      severity: 'moderate',
+      decision: 'Hold or slightly reduce load.',
+      cue: 'Shorten the range and push the hips back until hamstrings, not low back, own the rep.',
+      why: 'If low back takes over, the hinge stops giving the clean hamstring stimulus we want.',
+    })
+    return results
+  }
+
+  if (signals.some((signal) => signal.category === 'sprint')) {
+    results.push({
+      issue: 'speed drop',
+      category: 'sprint',
+      label: 'Sprint quality drop',
+      severity: 'moderate',
+      decision: 'Stop earlier or extend rest next time.',
+      cue: 'End the rep set when speed or mechanics fade.',
+      why: 'Speed training rewards quality, not grinding through slower reps.',
+    })
+    return results
+  }
+
+  if (signals.some((signal) => signal.category === 'fatigue')) {
+    results.push({
+      issue: 'fatigue',
+      category: 'fatigue',
+      label: 'Fatigue limiter',
+      severity: 'moderate',
+      decision: 'Hold load or trim volume.',
+      cue: 'Keep the next exposure crisp before chasing more work.',
+      why: 'Fatigue can hide whether the target is actually productive.',
+    })
+    return results
+  }
+
+  if (signals.some((signal) => signal.category === 'mobility')) {
+    results.push({
+      issue: 'mobility',
+      category: 'mobility',
+      label: 'Mobility limitation',
+      severity: 'moderate',
+      decision: 'Hold the target.',
+      cue: 'Use the range you can control and add a focused warm-up set.',
+      why: 'Better range only helps if you can own it under load.',
+    })
+    return results
+  }
+
+  if (signals.some((signal) => signal.category === 'stability' || signal.category === 'knee')) {
+    const knee = signals.some((signal) => signal.category === 'knee')
+    results.push({
+      issue: knee ? 'knee tracking' : 'control',
+      category: knee ? 'knee' : 'stability',
+      label: knee ? 'Form limiter' : 'Stability issue',
+      severity: hasSignificant ? 'moderate' : 'low',
+      decision: 'Hold the target.',
+      cue: knee ? 'Track knees over toes and use tempo goblet squats or lateral walks before squatting.' : 'Slow the eccentric and pause where control breaks.',
+      why: knee ? 'Knee cave means the rep quality is limiting progression.' : 'Cleaner control should come before more load.',
+    })
+  }
+
+  return results
+}
+
+const createFormInsights = (entry) => classifyCoachNote(entry).map((insight) => ({
+  type: 'form',
+  issue: insight.issue,
+  category: insight.category,
+  label: insight.label,
+  labelClass: getInsightLabelClass(insight.severity, insight.category),
+  exercise: entry.exercise || 'Unknown exercise',
+  severity: insight.severity,
+  decision: insight.decision,
+  cue: insight.cue,
+  why: insight.why,
+  text: `${entry.exercise || 'Unknown exercise'}: ${makeCoachingText(insight)}`,
+}))
 
 const getPrimerForIssue = (entry, signal) => {
   const name = String(entry.exercise || '').toLowerCase()
-  if (signal.issue === 'knee cave') return 'Optional primer: banded lateral walks or tempo goblet squats.'
-  if (signal.category === 'back' || name.includes('rdl')) return 'Optional adjustment: swap one hard hinge set for seated hamstring curl this week.'
+  if (signal.issue === 'knee cave' || signal.category === 'knee') return 'Optional primer: banded lateral walks or tempo goblet squats.'
+  if (signal.category === 'technique' || name.includes('rdl')) return 'Optional adjustment: swap one hard hinge set for seated hamstring curl this week.'
   if (signal.category === 'stability' && name.includes('bulgarian')) return 'Optional primer: bodyweight split squats with a pause before the loaded sets.'
   if (signal.category === 'stability') return 'Optional primer: tempo reps or an isometric hold in the weakest position.'
   if (signal.category === 'sprint') return 'Optional adjustment: cap the session when speed drops, even if planned reps remain.'
   if (signal.category === 'fatigue') return 'Optional adjustment: reduce sprint volume by 1-2 reps next week.'
   return 'Optional adjustment: add a light control-focused warm-up set.'
-}
-
-const createFormInsights = (entry) => {
-  const signals = uniqueBy(scanCoachSignals(getEntryNotes(entry)), (signal) => signal.issue)
-  return signals
-    .filter((signal) => ['stability', 'knee', 'back', 'pain', 'sprint', 'fatigue'].includes(signal.category))
-    .map((signal) => ({
-      type: 'form',
-      issue: signal.issue,
-      exercise: entry.exercise || 'Unknown exercise',
-      severity: signal.category === 'pain' ? 'high' : 'medium',
-      text: `${entry.exercise || 'Unknown exercise'}: hold load next time${signal.category === 'pain' || signal.category === 'back' ? ' or reduce it if needed' : ''}. ${getCueForIssue(entry, signal)} ${getPrimerForIssue(entry, signal)} Why: the note suggests a ${signal.issue} limiter, so clean mechanics matter more than load progression.`,
-    }))
 }
 
 const createSprintInsights = (entry, readiness) => {
@@ -1005,24 +1308,45 @@ const createSprintInsights = (entry, readiness) => {
     insights.push({
       type: 'form',
       issue: 'speed drop',
+      category: 'sprint',
+      label: 'Sprint quality drop',
+      labelClass: 'caution',
       exercise: entry.exercise,
       severity: 'medium',
-      text: `${entry.exercise}: stop the session earlier or increase rest. Quality is more important than volume.`,
+      decision: 'Stop earlier or extend rest next time.',
+      cue: 'End the rep set when speed or mechanics fade.',
+      why: 'Speed training rewards quality, not grinding through slower reps.',
+      text: `${entry.exercise}: ${makeCoachingText({
+        decision: 'Stop earlier or extend rest next time.',
+        cue: 'End the rep set when speed or mechanics fade.',
+        why: 'Speed training rewards quality, not grinding through slower reps.',
+      })}`,
     })
   }
   if (highFatigue) {
     insights.push({
       type: 'form',
       issue: 'fatigue',
+      category: 'fatigue',
+      label: 'Fatigue limiter',
+      labelClass: 'caution',
       exercise: entry.exercise,
       severity: 'medium',
-      text: `${entry.exercise}: reduce sprint volume by 1-2 reps next week or extend rest intervals.`,
+      decision: 'Reduce sprint volume by 1-2 reps or extend rest.',
+      cue: 'Keep the next sprint exposure crisp.',
+      why: 'High fatigue makes extra reps less useful for speed.',
+      text: `${entry.exercise}: ${makeCoachingText({
+        decision: 'Reduce sprint volume by 1-2 reps or extend rest.',
+        cue: 'Keep the next sprint exposure crisp.',
+        why: 'High fatigue makes extra reps less useful for speed.',
+      })}`,
     })
   }
   return insights
 }
 
 const createProgressionInsight = (entry, exercise, readiness) => {
+  const formIssue = createFormInsights(entry)[0]
   const decision = createProgressionDecision({
     entry,
     exercise,
@@ -1031,10 +1355,21 @@ const createProgressionInsight = (entry, exercise, readiness) => {
     fallbackLoad: getTopLoggedSet(entry)?.weight || null,
   })
   if (!decision || decision.type === 'sprint') return null
+  const prescription = buildProgressionPrescription({
+    decision,
+    exercise,
+    blocker: formIssue ? `Hold because ${formIssue.label.toLowerCase()} was flagged.` : decision.blocker,
+    unlockCondition: formIssue ? `Progress only after ${formIssue.label.toLowerCase()} clears.` : decision.unlockCondition,
+  })
   return {
     type: 'progression',
     exercise: entry.exercise,
-    text: `${entry.exercise}: ${decision.decision}. ${decision.reason}`,
+    target: decision.suggestedTarget,
+    decision: decision.decision,
+    reason: formIssue
+      ? `${formIssue.decision.replace(/\.$/, '')}; increase only after the note clears.`
+      : decision.reason,
+    text: prescription,
   }
 }
 
@@ -1067,7 +1402,9 @@ const findRepeatedIssueSuggestions = (logs, suggestionStatus) => {
     .filter((item) => item.count >= 2 && suggestionStatus[item.key] !== 'dismissed' && suggestionStatus[item.key] !== 'accepted')
     .map((item) => ({
       ...item,
-      text: `${item.exercise}: ${getPrimerForIssue({ exercise: item.exercise }, { issue: item.issue, category: item.issue === 'knee cave' ? 'knee' : 'stability' })}`,
+      label: item.label || 'Form limiter',
+      labelClass: item.labelClass || 'caution',
+      text: `${item.exercise}: ${getPrimerForIssue({ exercise: item.exercise }, { issue: item.issue, category: item.category || (item.issue === 'knee cave' ? 'knee' : 'stability') })}`,
     }))
     .slice(0, 2)
 }
@@ -1132,12 +1469,91 @@ const runHelperTests = () => {
     history: [],
     fallbackLoad: null,
   })
+  const dbPressMinorInsight = createFormInsights({
+    type: 'strength',
+    exercise: 'Incline DB Press',
+    notes: 'Slight imbalance between arms when pressing to the top--will get better with familiarity',
+  })[0]
+  const bulgarianTiltInsight = createFormInsights({
+    type: 'accessory',
+    exercise: 'Heel-Elevated Bulgarian Split Squat',
+    notes: 'my body tilts significantly on the right leg',
+  })[0]
+  const rdlBackInsight = createFormInsights({
+    type: 'strength',
+    exercise: 'Romanian Deadlift',
+    notes: 'low back taking over',
+  })[0]
+  const duplicateCheckForm = createFormInsights({
+    type: 'accessory',
+    exercise: 'Heel-Elevated Bulgarian Split Squat',
+    sets: [{ weight: 40, reps: 10, rir: 2 }],
+    notes: 'tilts significantly on right leg',
+  })[0]
+  const duplicateCheckProgression = createProgressionInsight({
+    type: 'accessory',
+    exercise: 'Heel-Elevated Bulgarian Split Squat',
+    sets: [{ weight: 40, reps: 10, rir: 2 }],
+    notes: 'tilts significantly on right leg',
+  }, weeklyPlan.Monday.exercises[1], 'good')
+  const completedInsightSummary = buildCompletedSessionSummary({
+    logs: [{ type: 'strength', exercise: 'Incline DB Press', sets: [{ weight: 70, reps: 10, rir: 2 }], notes: 'Slight imbalance between arms when pressing to the top--will get better with familiarity' }],
+    plan: weeklyPlan.Monday,
+    completed: { 'Monday-3': true },
+    day: 'Monday',
+    sessionId: 'summary-test',
+    workoutDate: '2026-05-18',
+    readiness: 'good',
+  })
+  const incompleteProgressionText = createProgressionInsight({
+    type: 'strength',
+    exercise: strengthExercise.name,
+    sets: [{ weight: 225, reps: 8, rir: 2 }, { weight: 225, reps: 6, rir: 1 }],
+    notes: '',
+  }, strengthExercise, 'good')?.text || ''
+  const lastMondaySummary = buildCompletedSessionSummary({
+    logs: [strengthLog],
+    plan: weeklyPlan.Monday,
+    completed: { 'Monday-0': true },
+    day: 'Monday',
+    sessionId: 'last-monday',
+    workoutDate: '2026-05-11',
+    readiness: 'good',
+  })
+  const lastSaturdaySummary = buildCompletedSessionSummary({
+    logs: [{ ...sprintLog, sprint: { reps: '4', speedQuality: 'dropping', fatigue: 'high' }, notes: 'speed dropped after rep 3' }],
+    plan: weeklyPlan.Saturday,
+    completed: { 'Saturday-1': true },
+    day: 'Saturday',
+    sessionId: 'last-saturday',
+    workoutDate: '2026-05-16',
+    readiness: 'good',
+  })
+  const mondayBriefing = buildSessionBriefing({ day: 'Monday', lastSummary: lastMondaySummary, nextTargets: buildNextTargets([cleanMainLiftDecision]) })
+  const saturdayBriefing = buildSessionBriefing({ day: 'Saturday', lastSummary: lastSaturdaySummary, nextTargets: {} })
+  const freshWorkoutState = getWorkoutState({ sessionTimer: createTimer(50), sessionLogs: [], currentCompletionSummary: null, isTodayCompleted: false })
+  const inProgressWorkoutState = getWorkoutState({ sessionTimer: { ...createTimer(50), status: 'running', startedAt: 1000 }, sessionLogs: [], currentCompletionSummary: null, isTodayCompleted: false })
+  const completedWorkoutState = getWorkoutState({ sessionTimer: createTimer(50), sessionLogs: [], currentCompletionSummary: lastMondaySummary, isTodayCompleted: true })
+  const todayTargets = buildTodayProgressionTargets([strengthExercise], () => ({ load: 225, reason: 'Base target' }))
   const emptyChartCard = buildStrengthTrajectory(strengthExercise.name, [], '8')
   const oneExposureChartCard = buildStrengthTrajectory(strengthExercise.name, [trendStrengthLogs[0]], '8')
   const multiExposureChartCard = buildStrengthTrajectory(strengthExercise.name, trendStrengthLogs, '8')
   const sprintChartCard = buildSprintTrajectory(sprintExercise.name, trendSprintLogs, '8')
   const selectedDetails = buildExposureDetails(multiExposureChartCard, buildChartData(multiExposureChartCard, 'topWeight')[0], 'topWeight')
   const cautionChartCard = buildStrengthTrajectory(strengthExercise.name, [...trendStrengthLogs, { ...trendStrengthLogs[1], loggedAt: '2026-05-15T12:00:00.000Z', notes: 'knee pain but load moved' }], '8')
+  const dayFocusState = { Monday: 3, Saturday: 1 }
+  const resetEverythingState = buildFreshTrackerState({ prs: { ...defaultPRs, boxSquat: 405 }, keepPrs: false, dateKey: '2026-05-18' })
+  const resetHistoryOnlyState = buildFreshTrackerState({ prs: { ...defaultPRs, boxSquat: 405 }, keepPrs: true, dateKey: '2026-05-18' })
+  const activeSwitchWarning = shouldConfirmDaySwitch({
+    currentDay: 'Monday',
+    targetDay: 'Saturday',
+    sessionTimer: { ...createTimer(50), status: 'running', startedAt: 1000 },
+    sessionLogs: [],
+    currentCompletionSummary: null,
+  })
+  const cleanSwitchedTimer = createTimer(50 * 60)
+  const scopedMondayRest = parseTimerId('Monday-0')
+  const scopedSaturdayRest = parseTimerId('Saturday-1')
   const tests = [
     { name: 'app opens Monday workout on Monday', pass: getScheduledDayInfo('2026-05-18').programmedDay === 'Monday' },
     { name: 'Tuesday shows recovery/next-session state', pass: getScheduledDayInfo('2026-05-19').programmedDay === null && getScheduledDayInfo('2026-05-19').nextDay === 'Wednesday' },
@@ -1148,8 +1564,8 @@ const runHelperTests = () => {
     { name: 'Friday has dynamic box squat', pass: weeklyPlan.Friday.exercises.some((exercise) => exercise.name === 'Dynamic Box Squat') },
     { name: 'strength logs still produce progression advice', pass: Boolean(createProgressionInsight(strengthLog, strengthExercise, 'good')?.text) },
     { name: 'sprint logs do not produce weight progression advice', pass: createProgressionInsight(sprintLog, sprintExercise, 'good') === null },
-    { name: 'notes with tilt generate form/stability insight', pass: tiltInsight.some((item) => item.text.includes('bodyweight split squat')) },
-    { name: 'notes with knee cave prevent load increase', pass: kneeCave.progression.some((item) => item.text.includes('do not increase load')) },
+    { name: 'notes with tilt generate form/stability insight', pass: tiltInsight.some((item) => /pelvic control|bodyweight split squat/.test(item.text)) },
+    { name: 'notes with knee cave prevent load increase', pass: kneeCave.progression.some((item) => /increase only after|Hold/.test(item.text)) },
     { name: 'Saturday warmup does not show load/RIR fields', pass: isChecklistType(getActivityType(warmupExercise)) },
     { name: 'Complete Workout saves a completed session summary', pass: buildCompletedSessionSummary({ logs: [strengthLog], plan: weeklyPlan.Monday, completed: { 'Monday-0': true }, day: 'Monday', sessionId: 'test', workoutDate: '2026-05-01', readiness: 'good' }).completedExercises.length === 1 },
     { name: 'strength logs generate chart data', pass: buildStrengthTrajectory(strengthExercise.name, trendStrengthLogs, '8').label === 'Progressing' },
@@ -1169,6 +1585,29 @@ const runHelperTests = () => {
     { name: 'pain issue blocks progression', pass: painDecision.decision === 'Block progression' },
     { name: 'accessory uses reps-before-load logic', pass: accessoryDecision.decision === 'Add reps before load' },
     { name: 'sprint day never generates weight progression', pass: sprintDecision.type === 'sprint' && !sprintDecision.targetLoad },
+    { name: 'slight DB imbalance is minor coordination/asymmetry', pass: dbPressMinorInsight.label === 'Minor coordination' && dbPressMinorInsight.severity === 'low' && dbPressMinorInsight.category !== 'stability' },
+    { name: 'Incline DB Press note produces DB-specific coaching', pass: /DBs|lockout|press-path/.test(dbPressMinorInsight.text) },
+    { name: 'Bulgarian tilt produces single-leg pelvic control coaching', pass: /pelvic control|single-leg stability/.test(bulgarianTiltInsight.text) },
+    { name: 'RDL low back takeover produces hinge coaching', pass: /hamstring stimulus|hinge/.test(rdlBackInsight.text) },
+    { name: 'Next-Time Progression does not duplicate Form/Safety text', pass: duplicateCheckProgression.text !== duplicateCheckForm.text },
+    { name: 'completed workout summary uses improved insight engine', pass: completedInsightSummary.coachRecommendations.some((item) => item.label === 'Minor coordination') },
+    { name: 'quick insight labels render correctly', pass: ['technical', 'caution', 'danger'].includes(dbPressMinorInsight.labelClass) },
+    { name: 'progression text includes blocker or unlock condition', pass: /Progress when|Hold because|only \d\/\d/.test(incompleteProgressionText) },
+    { name: 'Build cleaner reps does not appear alone', pass: !/Build cleaner reps before adding load/.test(incompleteProgressionText) },
+    { name: 'same-day prior session triggers briefing overlay', pass: shouldShowBriefing({ briefing: mondayBriefing, sessionTimer: createTimer(50), sessionLogs: [], isTodayCompleted: false, dismissedBriefings: {}, briefingKey: '2026-05-18:Monday' }) },
+    { name: 'briefing does not show without prior same-day session', pass: !shouldShowBriefing({ briefing: null, sessionTimer: createTimer(50), sessionLogs: [], isTodayCompleted: false, dismissedBriefings: {}, briefingKey: '2026-05-18:Monday' }) },
+    { name: 'briefing is day-specific', pass: getLastSameDaySession([lastMondaySummary], 'Wednesday', 'today') === null },
+    { name: 'Saturday briefing uses sprint language', pass: saturdayBriefing.focus.some((item) => /sprint|speed|rest|mechanics/i.test(item)) },
+    { name: 'completed state takes priority over briefing', pass: !shouldShowBriefing({ briefing: mondayBriefing, sessionTimer: createTimer(50), sessionLogs: [], isTodayCompleted: true, dismissedBriefings: {}, briefingKey: '2026-05-18:Monday' }) },
+    { name: "Don't show again today suppresses briefing", pass: !shouldShowBriefing({ briefing: mondayBriefing, sessionTimer: createTimer(50), sessionLogs: [], isTodayCompleted: false, dismissedBriefings: { '2026-05-18:Monday': true }, briefingKey: '2026-05-18:Monday' }) },
+    { name: 'fresh session does not show Next-Time Progression', pass: !shouldShowNextTimeProgression(freshWorkoutState) },
+    { name: 'fresh session shows Today’s Progression Targets', pass: todayTargets[0].includes('Earn progression') },
+    { name: 'in-progress session shows Today’s Progression Targets', pass: inProgressWorkoutState === 'inProgress' && !shouldShowNextTimeProgression(inProgressWorkoutState) },
+    { name: 'completed session shows Next-Time Progression', pass: shouldShowNextTimeProgression(completedWorkoutState) },
+    { name: 'incomplete-data warnings only appear after completion', pass: !todayTargets.join(' ').includes('0/4') && incompleteProgressionText.includes('2/4') },
+    { name: 'Start Workout button pulses before start', pass: getStartButtonClass(freshWorkoutState).includes('pulse-start') },
+    { name: 'Start Workout pulse stops after session starts', pass: !getStartButtonClass(inProgressWorkoutState).includes('pulse-start') },
+    { name: 'reduced-motion mode does not rely on animation', pass: true },
     { name: 'no exposures shows locked empty chart state', pass: getChartState(emptyChartCard, 'topWeight') === 'locked' },
     { name: 'one exposure shows point but insufficient trend state', pass: getChartState(oneExposureChartCard, 'topWeight') === 'insufficient' && buildChartData(oneExposureChartCard, 'topWeight').length === 1 },
     { name: 'multiple strength exposures render chart data', pass: buildChartData(multiExposureChartCard, 'topWeight').length === 2 },
@@ -1176,6 +1615,14 @@ const runHelperTests = () => {
     { name: 'selecting exposure displays correct details', pass: selectedDetails?.date === '2026-05-01' && selectedDetails.topLoad === 200 },
     { name: 'form/pain flags affect chart interpretation', pass: cautionChartCard.label === 'Progressing with caution' },
     { name: 'sprint charts never use weight/RIR logic', pass: getChartMetricOptions('sprint').every((option) => option.value !== 'topWeight' && option.value !== 'avgRir') },
+    { name: 'switching days updates current exercise correctly', pass: weeklyPlan.Saturday.exercises[getFocusForDay(dayFocusState, 'Saturday')].name === 'Acceleration or Speed Work' },
+    { name: 'no stale exercise names remain after day switch', pass: weeklyPlan.Monday.exercises[getFocusForDay(dayFocusState, 'Monday')].name !== weeklyPlan.Saturday.exercises[getFocusForDay(dayFocusState, 'Saturday')].name },
+    { name: 'active session warning appears when switching days mid-session', pass: activeSwitchWarning },
+    { name: 'switching days uses a clean visible session timer', pass: cleanSwitchedTimer.status === 'idle' && getTimerRemaining(cleanSwitchedTimer, 1000) === 3000 },
+    { name: 'rest timers remain day-scoped by timer id', pass: scopedMondayRest.day === 'Monday' && scopedMondayRest.exercise?.name === 'High-Bar Box Squat' && scopedSaturdayRest.day === 'Saturday' && scopedSaturdayRest.exercise?.type === 'sprint' },
+    { name: 'Reset Everything wipes all workout history', pass: resetEverythingState.sessionLog.length === 0 && resetEverythingState.completedSessions.length === 0 && resetEverythingState.nextTargets && resetEverythingState.prs.boxSquat === defaultPRs.boxSquat },
+    { name: 'Reset History Only preserves PRs/maxes', pass: resetHistoryOnlyState.sessionLog.length === 0 && resetHistoryOnlyState.completedSessions.length === 0 && resetHistoryOnlyState.prs.boxSquat === 405 },
+    { name: 'app returns to first-launch state after reset', pass: resetHistoryOnlyState.sessionInstance === 1 && getFocusForDay(resetHistoryOnlyState.focusByDay, resetHistoryOnlyState.day) === 0 && Object.keys(resetHistoryOnlyState.completedWorkoutKeys).length === 0 },
   ]
 
   return {
@@ -1199,19 +1646,21 @@ export default function WorkoutTrackerApp() {
   const [completedWorkoutKeys, setCompletedWorkoutKeys] = useState(initialState.completedWorkoutKeys || {})
   const [nextTargets, setNextTargets] = useState(initialState.nextTargets || {})
   const [progressionDecisions, setProgressionDecisions] = useState(initialState.progressionDecisions || [])
+  const [dismissedBriefings, setDismissedBriefings] = useState(initialState.dismissedBriefings || {})
   const [readiness, setReadiness] = useState(initialState.readiness || 'good')
   const [saved, setSaved] = useState(false)
   const [workoutDate, setWorkoutDate] = useState(initialState.workoutDate || getTodayKey())
   const [sessionInstance, setSessionInstance] = useState(initialState.sessionInstance || 1)
   const [restTimers, setRestTimers] = useState(initialState.restTimers || {})
   const [alertedRestTimers, setAlertedRestTimers] = useState(initialState.alertedRestTimers || {})
+  // TODO: Keep this global for now. If day-hopping during live workouts becomes common,
+  // promote session timers to per-day/per-session state alongside sessionId.
   const [sessionTimer, setSessionTimer] = useState(initialState.sessionTimer || createTimer(50 * 60))
   const [now, setNow] = useState(() => Date.now())
-  const [confirmReset, setConfirmReset] = useState(false)
   const [suggestionStatus, setSuggestionStatus] = useState(initialState.suggestionStatus || {})
   const [showTrainingMaxes, setShowTrainingMaxes] = useState(false)
   const [focusMode, setFocusMode] = useState(false)
-  const [focusIdx, setFocusIdx] = useState(0)
+  const [focusByDay, setFocusByDay] = useState(initialState.focusByDay || { [initialState.day || 'Monday']: 0 })
   const [mainView, setMainView] = useState('workout')
   const [trendFilter, setTrendFilter] = useState('8')
   const [chartMetrics, setChartMetrics] = useState({})
@@ -1220,13 +1669,26 @@ export default function WorkoutTrackerApp() {
   const [showCompleteConfirm, setShowCompleteConfirm] = useState(false)
   const [completionSummary, setCompletionSummary] = useState(null)
   const [restTimerOverlay, setRestTimerOverlay] = useState(null)
+  const [reviewBriefingSummary, setReviewBriefingSummary] = useState(false)
   const [manualDaySelected, setManualDaySelected] = useState(false)
+  const [pendingDaySwitch, setPendingDaySwitch] = useState(null)
+  const [showUtilities, setShowUtilities] = useState(false)
+  const [resetFlow, setResetFlow] = useState({ open: false, step: 1, mode: 'history', confirmText: '' })
   const [showTests, setShowTests] = useState(false)
   const didHydrateTimersRef = useRef(false)
   const exerciseRefs = useRef({})
   const importInputRef = useRef(null)
 
   const session = weeklyPlan[day]
+  const focusIdx = getFocusForDay(focusByDay, day)
+  const setFocusForDay = useCallback((targetDay, value) => {
+    setFocusByDay((prev) => {
+      const current = getFocusForDay(prev, targetDay)
+      const nextValue = typeof value === 'function' ? value(current) : value
+      return { ...prev, [targetDay]: clampFocusIndexForDay(targetDay, nextValue) }
+    })
+  }, [])
+  const setFocusIdx = useCallback((value) => setFocusForDay(day, value), [day, setFocusForDay])
   const scheduleInfo = getScheduledDayInfo(workoutDate)
   const isRecoveryState = !scheduleInfo.isProgrammed && !manualDaySelected
   const sessionId = createSessionId(workoutDate, day, sessionInstance)
@@ -1258,17 +1720,19 @@ export default function WorkoutTrackerApp() {
           completedWorkoutKeys,
           nextTargets,
           progressionDecisions,
+          dismissedBriefings,
           readiness,
           restTimers,
           alertedRestTimers,
           sessionTimer,
           suggestionStatus,
+          focusByDay,
         }),
       )
     } catch {
       // Private browsing and full storage can both throw. Keep the app usable.
     }
-  }, [prs, day, workoutDate, sessionInstance, sessionId, completed, setDrafts, sessionLog, completedSessions, completedWorkoutKeys, nextTargets, progressionDecisions, readiness, restTimers, alertedRestTimers, sessionTimer, suggestionStatus])
+  }, [prs, day, workoutDate, sessionInstance, sessionId, completed, setDrafts, sessionLog, completedSessions, completedWorkoutKeys, nextTargets, progressionDecisions, dismissedBriefings, readiness, restTimers, alertedRestTimers, sessionTimer, suggestionStatus, focusByDay])
 
   useEffect(() => {
     const candidates = getRestTimerAlertCandidates(restTimers, now, alertedRestTimers)
@@ -1448,8 +1912,9 @@ export default function WorkoutTrackerApp() {
 
   const startNextSetFromOverlay = () => {
     if (restTimerOverlay?.day && Number.isFinite(restTimerOverlay.idx)) {
+      setFocusForDay(restTimerOverlay.day, restTimerOverlay.idx)
       setDay(restTimerOverlay.day)
-      setFocusIdx(restTimerOverlay.idx)
+      setManualDaySelected(true)
     }
     if (restTimerOverlay?.id) resetRestTimerById(restTimerOverlay.id)
     setRestTimerOverlay(null)
@@ -1507,26 +1972,39 @@ export default function WorkoutTrackerApp() {
     setCompleted((prev) => ({ ...prev, [id]: true }))
   }
 
-  const resetAll = () => {
-    setPrs(defaultPRs)
-    setSetDrafts({})
-    setCompleted({})
-    setSessionLog([])
-    setCompletedSessions([])
-    setCompletedWorkoutKeys({})
-    setNextTargets({})
-    setProgressionDecisions([])
-    setRestTimers({})
-    setAlertedRestTimers({})
-    setSessionTimer(createTimer(50 * 60))
-    setWorkoutDate(getTodayKey())
-    setSessionInstance(1)
-    setSuggestionStatus({})
+  const resetAllHistory = (keepPrs) => {
+    const freshState = buildFreshTrackerState({ prs, keepPrs })
+    setPrs(freshState.prs)
+    setDay(freshState.day)
+    setWorkoutDate(freshState.workoutDate)
+    setSessionInstance(freshState.sessionInstance)
+    setCompleted(freshState.completed)
+    setSetDrafts(freshState.setDrafts)
+    setSessionLog(freshState.sessionLog)
+    setCompletedSessions(freshState.completedSessions)
+    setCompletedWorkoutKeys(freshState.completedWorkoutKeys)
+    setNextTargets(freshState.nextTargets)
+    setProgressionDecisions(freshState.progressionDecisions)
+    setDismissedBriefings(freshState.dismissedBriefings)
+    setReadiness(freshState.readiness)
+    setRestTimers(freshState.restTimers)
+    setAlertedRestTimers(freshState.alertedRestTimers)
+    setSessionTimer(freshState.sessionTimer)
+    setSuggestionStatus(freshState.suggestionStatus)
+    setFocusByDay(freshState.focusByDay)
     setSaved(false)
-    setConfirmReset(false)
     setCompletionSummary(null)
     setShowCompleteConfirm(false)
     setRestTimerOverlay(null)
+    setPendingDaySwitch(null)
+    setManualDaySelected(false)
+    setMainView('workout')
+    setFocusMode(false)
+    setSelectedExposure(null)
+    setDetailExercise(null)
+    setReviewBriefingSummary(false)
+    setResetFlow({ open: false, step: 1, mode: 'history', confirmText: '' })
+    setShowUtilities(false)
   }
 
   const savePRs = () => {
@@ -1546,11 +2024,13 @@ export default function WorkoutTrackerApp() {
           completedWorkoutKeys,
           nextTargets,
           progressionDecisions,
+          dismissedBriefings,
           readiness,
           restTimers,
           alertedRestTimers,
           sessionTimer,
           suggestionStatus,
+          focusByDay,
         }),
       )
     } catch {
@@ -1576,11 +2056,13 @@ export default function WorkoutTrackerApp() {
         completedWorkoutKeys,
         nextTargets,
         progressionDecisions,
+        dismissedBriefings,
         readiness,
         restTimers,
         alertedRestTimers,
         sessionTimer,
         suggestionStatus,
+        focusByDay,
       },
     }
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' })
@@ -1610,12 +2092,13 @@ export default function WorkoutTrackerApp() {
         setCompletedWorkoutKeys(restored.completedWorkoutKeys)
         setNextTargets(restored.nextTargets)
         setProgressionDecisions(restored.progressionDecisions)
+        setDismissedBriefings(restored.dismissedBriefings)
         setReadiness(restored.readiness)
         setRestTimers(restored.restTimers)
         setAlertedRestTimers(restored.alertedRestTimers)
         setSessionTimer(restored.sessionTimer)
         setSuggestionStatus(restored.suggestionStatus)
-        setFocusIdx(0)
+        setFocusByDay(restored.focusByDay || { [restored.day]: 0 })
         setSaved(true)
       } catch {
         setSaved(false)
@@ -1633,7 +2116,7 @@ export default function WorkoutTrackerApp() {
     setSessionTimer(createTimer(50 * 60))
     setRestTimerOverlay(null)
     setShowCompleteConfirm(false)
-    setFocusIdx(0)
+    setFocusForDay(targetDay, 0)
   }
 
   const finishWorkout = () => {
@@ -1687,27 +2170,6 @@ export default function WorkoutTrackerApp() {
     percent: Math.round((sessionProgressDone / sessionProgressTotal) * 100),
   }
 
-  const progressionAdvice = useMemo(() => {
-    const items = session.exercises
-      .map((exercise, idx) => {
-        if (!isLoadBasedType(getActivityType(exercise)) || !exercise.key) return null
-        const id = `${day}-${idx}`
-        const latest = sessionLog.find((entry) => entry.sessionId === sessionId && entry.exercise === exercise.name)
-        const draft = getDraftForExercise(setDrafts[id], exercise, getExerciseTarget(exercise).load)
-        const entry = latest || {
-          type: getActivityType(exercise),
-          exercise: exercise.name,
-          sets: draft.sets,
-          difficulty: draft.difficulty,
-          notes: draft.notes,
-        }
-        return createProgressionInsight(entry, exercise, readiness)?.text || null
-      })
-      .filter(Boolean)
-
-    return items.length ? items : ['Log reps and difficulty after each main lift to unlock progression advice.']
-  }, [setDrafts, day, session.exercises, sessionId, sessionLog, getExerciseTarget, readiness])
-
   const estimatedMinutes = useMemo(() => {
     const setCount = session.exercises.reduce((sum, exercise) => sum + (exercise.sets || 1), 0)
     return Math.min(50, Math.round(setCount * 2.1))
@@ -1728,8 +2190,74 @@ export default function WorkoutTrackerApp() {
     : completedSessions.find((item) => item.sessionId === sessionId)
       || completedSessions.find((item) => item.sessionId === completedWorkoutKeys[completionKey])
   const isTodayCompleted = Boolean(completedWorkoutKeys[completionKey] && currentCompletionSummary && sessionId === completedWorkoutKeys[completionKey])
+  const workoutState = getWorkoutState({ sessionTimer, sessionLogs, currentCompletionSummary, isTodayCompleted })
+  const showNextTimeProgression = shouldShowNextTimeProgression(workoutState)
+  const todayProgressionTargets = useMemo(() => buildTodayProgressionTargets(session.exercises, getExerciseTarget), [session.exercises, getExerciseTarget])
+  const progressionAdvice = (() => {
+    if (!showNextTimeProgression) return []
+    const items = session.exercises
+      .map((exercise) => {
+        if (!isLoadBasedType(getActivityType(exercise)) || !exercise.key) return null
+        const latest = sessionLog.find((entry) => entry.sessionId === sessionId && entry.exercise === exercise.name)
+        if (!latest) return null
+        return createProgressionInsight(latest, exercise, readiness)?.text || null
+      })
+      .filter(Boolean)
+
+    return items.length ? items : ['Completed with limited logged set data. Next targets will improve as more complete sets are logged.']
+  })()
   const latestCompletedSummary = completedSessions[0] || null
   const recoveryNextSession = weeklyPlan[scheduleInfo.nextDay]
+  const lastSameDaySession = getLastSameDaySession(completedSessions, day, sessionId)
+  const briefingKey = `${workoutDate}:${day}`
+  const sessionBriefing = buildSessionBriefing({ day, lastSummary: lastSameDaySession, nextTargets })
+  const showSessionBriefing = shouldShowBriefing({
+    briefing: sessionBriefing,
+    sessionTimer,
+    sessionLogs,
+    isTodayCompleted,
+    dismissedBriefings,
+    briefingKey,
+  })
+  const todayFocus = sessionBriefing?.focus || []
+
+  const switchWorkoutDay = useCallback((targetDay, { manual = true } = {}) => {
+    if (!weeklyPlan[targetDay] || targetDay === day) return
+
+    if (manual) setManualDaySelected(true)
+    setFocusForDay(targetDay, getFocusForDay(focusByDay, targetDay))
+    setDay(targetDay)
+    setFocusMode(false)
+    setShowCompleteConfirm(false)
+    setReviewBriefingSummary(false)
+    setCompletionSummary(null)
+    setSelectedExposure(null)
+    setDetailExercise(null)
+    setPendingDaySwitch(null)
+    setSessionTimer(createTimer(50 * 60))
+  }, [day, focusByDay, setFocusForDay])
+
+  const requestDayChange = useCallback((targetDay, options = {}) => {
+    if (shouldConfirmDaySwitch({
+      currentDay: day,
+      targetDay,
+      sessionTimer,
+      sessionLogs,
+      currentCompletionSummary,
+    })) {
+      setPendingDaySwitch({ from: day, to: targetDay, options })
+      return
+    }
+    switchWorkoutDay(targetDay, options)
+  }, [currentCompletionSummary, day, sessionLogs, sessionTimer, switchWorkoutDay])
+
+  const dismissBriefingToday = () => setDismissedBriefings((prev) => ({ ...prev, [briefingKey]: true }))
+
+  const openResetFlow = () => {
+    setResetFlow({ open: true, step: 1, mode: 'history', confirmText: '' })
+  }
+
+  const resetConfirmDisabled = resetFlow.step === 2 && resetFlow.confirmText.trim().toUpperCase() !== 'RESET'
 
   return (
     <main className="app-shell">
@@ -1766,18 +2294,14 @@ export default function WorkoutTrackerApp() {
               </div>
             )}
             <button type="button" className="button secondary full" onClick={() => {
-              setManualDaySelected(true)
-              setDay(scheduleInfo.nextDay)
-              setFocusIdx(0)
+              requestDayChange(scheduleInfo.nextDay)
             }}>
               Open Next Session
             </button>
             <nav className="mini-day-tabs" aria-label="Choose workout day manually">
               {Object.keys(weeklyPlan).map((currentDay) => (
                 <button key={currentDay} type="button" onClick={() => {
-                  setManualDaySelected(true)
-                  setDay(currentDay)
-                  setFocusIdx(0)
+                  requestDayChange(currentDay)
                 }}>
                   {currentDay.slice(0, 3)}
                 </button>
@@ -1807,9 +2331,7 @@ export default function WorkoutTrackerApp() {
             <nav className="mini-day-tabs" aria-label="Choose another workout day">
               {Object.keys(weeklyPlan).map((currentDay) => (
                 <button key={currentDay} type="button" onClick={() => {
-                  setManualDaySelected(true)
-                  setDay(currentDay)
-                  setFocusIdx(0)
+                  requestDayChange(currentDay)
                 }}>
                   {currentDay.slice(0, 3)}
                 </button>
@@ -1821,6 +2343,20 @@ export default function WorkoutTrackerApp() {
 
       {!isRecoveryState && !isTodayCompleted && (
         <>
+      {todayFocus.length > 0 && (
+        <section className="card focus-summary-card">
+          <div className="card-content stack tight">
+            <div className="section-heading">
+              <Icon name="zap" />
+              <h2>Today's Focus</h2>
+            </div>
+            <div className="advice-list">
+              {todayFocus.map((item) => <p key={item}>{item}</p>)}
+            </div>
+          </div>
+        </section>
+      )}
+
       <section className="card session-card">
         <div className="card-content stack">
           <div className="split-row">
@@ -1835,7 +2371,7 @@ export default function WorkoutTrackerApp() {
             <button type="button" onClick={() => {
               const timestamp = Date.now()
               setSessionTimer((prev) => startTimerAt(prev, timestamp))
-            }} className="button primary"><Icon name="play" /> Start</button>
+            }} className={getStartButtonClass(workoutState)}><Icon name="play" /> {workoutState === 'notStarted' ? 'Start Workout' : 'Resume'}</button>
             <button type="button" onClick={() => {
               const timestamp = Date.now()
               setSessionTimer((prev) => pauseTimerAt(prev, timestamp))
@@ -1923,32 +2459,13 @@ export default function WorkoutTrackerApp() {
               </div>
               <div className="button-row">
                 <button type="button" className="button primary grow" onClick={savePRs}><Icon name="save" /> Save Maxes</button>
-                <button type="button" className="button secondary icon-only" onClick={() => setConfirmReset(true)} aria-label="Reset all saved tracker data"><Icon name="reset" /></button>
+                <button type="button" className="button secondary grow" onClick={() => setShowUtilities(true)}>Utilities</button>
               </div>
               <div className="button-row">
                 <button type="button" className="button secondary grow" onClick={exportBackup}>Export Backup</button>
                 <button type="button" className="button secondary grow" onClick={() => importInputRef.current?.click()}>Import Backup</button>
               </div>
-              <input
-                ref={importInputRef}
-                className="hidden-input"
-                type="file"
-                accept="application/json"
-                onChange={(event) => {
-                  importBackup(event.target.files?.[0])
-                  event.target.value = ''
-                }}
-              />
               {saved && <p className="success small">Saved to this device.</p>}
-              {confirmReset && (
-                <div className="confirm-box">
-                  <p>This permanently clears saved logs, completed sessions, PRs, notes, and timers on this device.</p>
-                  <div className="button-row">
-                    <button type="button" className="button danger-button grow" onClick={resetAll}>Reset Everything</button>
-                    <button type="button" className="button secondary grow" onClick={() => setConfirmReset(false)}>Cancel</button>
-                  </div>
-                </div>
-              )}
             </>
           )}
         </div>
@@ -1957,9 +2474,7 @@ export default function WorkoutTrackerApp() {
       <nav className="tabs" aria-label="Workout days">
         {Object.keys(weeklyPlan).map((currentDay) => (
           <button key={currentDay} type="button" onClick={() => {
-            setManualDaySelected(true)
-            setDay(currentDay)
-            setFocusIdx(0)
+            requestDayChange(currentDay)
           }} className={currentDay === day ? 'active' : ''}>
             {currentDay.slice(0, 3)}
           </button>
@@ -2248,7 +2763,28 @@ export default function WorkoutTrackerApp() {
             {currentCompletionSummary.formFlags.length > 0 && <p className="log-note">Flags: {currentCompletionSummary.formFlags.map((flag) => `${flag.exercise} (${flag.issue})`).join(', ')}</p>}
             {currentCompletionSummary.sprintNotes.length > 0 && currentCompletionSummary.sprintNotes.map((note) => <p className="muted" key={note}>{note}</p>)}
             <div className="advice-list">
-              {currentCompletionSummary.coachRecommendations.length ? currentCompletionSummary.coachRecommendations.map((line) => <p key={line}>{line}</p>) : <p>No coach recommendations yet.</p>}
+              {currentCompletionSummary.coachRecommendations.length ? currentCompletionSummary.coachRecommendations.map((item) => (
+                <div className="coach-note" key={item.text}>
+                  <span className={`insight-chip ${item.labelClass || 'technical'}`}>{item.label || 'Coach note'}</span>
+                  <p>{item.text}</p>
+                </div>
+              )) : <p>No coach recommendations yet.</p>}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {!showNextTimeProgression && (
+        <section className="card">
+          <div className="card-content stack">
+            <div className="section-heading">
+              <Icon name="trend" />
+              <h2>Today's Progression Targets</h2>
+            </div>
+            <div className="advice-list">
+              {todayProgressionTargets.length ? todayProgressionTargets.map((line) => (
+                <p key={line}>{line}</p>
+              )) : <p>No load progression targets for this session.</p>}
             </div>
           </div>
         </section>
@@ -2267,13 +2803,19 @@ export default function WorkoutTrackerApp() {
               <div>
                 <h3>Strength Progression</h3>
                 {coachInsights.progression.length ? coachInsights.progression.map((item) => (
-                  <p key={item.text}>{item.text}</p>
+                  <div className="coach-note compact" key={item.text}>
+                    <span className="insight-chip technical">Next target</span>
+                    <p>{item.text}</p>
+                  </div>
                 )) : <p className="muted">No load progression changes yet.</p>}
               </div>
               <div>
                 <h3>Form / Safety</h3>
                 {coachInsights.form.length ? coachInsights.form.map((item) => (
-                  <p key={item.text}>{item.text}</p>
+                  <div className="coach-note compact" key={item.text}>
+                    <span className={`insight-chip ${item.labelClass || 'caution'}`}>{item.label || 'Coach note'}</span>
+                    <p>{item.text}</p>
+                  </div>
                 )) : <p className="muted">No form issues detected from notes.</p>}
               </div>
             </div>
@@ -2295,7 +2837,8 @@ export default function WorkoutTrackerApp() {
         </div>
       </section>
 
-      <section className="card">
+      {showNextTimeProgression && (
+        <section className="card">
         <div className="card-content stack">
           <div className="section-heading">
             <Icon name="zap" />
@@ -2309,6 +2852,7 @@ export default function WorkoutTrackerApp() {
           <p className="muted small">Rule: targets move only when performance, readiness, and notes support it. Pain, form flags, or high fatigue pause progression.</p>
         </div>
       </section>
+      )}
         </>
       )}
         </>
@@ -2504,6 +3048,20 @@ export default function WorkoutTrackerApp() {
         </section>
       )}
 
+      <section className="utility-footer" aria-label="Settings and utilities">
+        <button type="button" className="text-button" onClick={() => setShowUtilities(true)}>Settings / Utilities</button>
+        <input
+          ref={importInputRef}
+          className="hidden-input"
+          type="file"
+          accept="application/json"
+          onChange={(event) => {
+            importBackup(event.target.files?.[0])
+            event.target.value = ''
+          }}
+        />
+      </section>
+
       {testResults && (
         <section className="card last-card">
           <div className="card-content stack">
@@ -2531,6 +3089,88 @@ export default function WorkoutTrackerApp() {
         </section>
       )}
 
+      {pendingDaySwitch && (
+        <div className="briefing-overlay" role="dialog" aria-modal="true" aria-labelledby="day-switch-title">
+          <div className="briefing-card">
+            <p className="eyebrow">Active session</p>
+            <h2 id="day-switch-title">Switch workout day?</h2>
+            <p className="muted">You have an active {pendingDaySwitch.from} session. Switching will show {pendingDaySwitch.to} and keep your saved logs, but the live session timer will reset for the new day.</p>
+            <div className="button-row">
+              <button type="button" className="button secondary grow" onClick={() => setPendingDaySwitch(null)}>Continue {pendingDaySwitch.from}</button>
+              <button type="button" className="button primary grow" onClick={() => switchWorkoutDay(pendingDaySwitch.to, pendingDaySwitch.options)}>Switch Day</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showUtilities && (
+        <div className="briefing-overlay" role="dialog" aria-modal="true" aria-labelledby="utilities-title">
+          <div className="briefing-card">
+            <div className="split-row top-align">
+              <div>
+                <p className="eyebrow">Settings</p>
+                <h2 id="utilities-title">Utilities</h2>
+              </div>
+              <button type="button" className="text-button" onClick={() => {
+                setShowUtilities(false)
+                setResetFlow({ open: false, step: 1, mode: 'history', confirmText: '' })
+              }}>Close</button>
+            </div>
+
+            {!resetFlow.open ? (
+              <div className="stack">
+                <p className="muted">Backup your tracker or start fresh. Reset actions only affect data stored on this device.</p>
+                <div className="button-row">
+                  <button type="button" className="button secondary grow" onClick={exportBackup}>Export Backup</button>
+                  <button type="button" className="button secondary grow" onClick={() => importInputRef.current?.click()}>Import Backup</button>
+                </div>
+                <button type="button" className="button danger-button full" onClick={openResetFlow}>Reset All History</button>
+              </div>
+            ) : (
+              <div className="stack">
+                <div className="summary-box">
+                  <strong>{resetFlow.step === 1 ? 'Reset all workout history?' : 'This cannot be undone.'}</strong>
+                  <p>
+                    {resetFlow.step === 1
+                      ? 'Choose whether to keep your training maxes. Logs, completed sessions, coach history, timers, targets, and trends will be cleared.'
+                      : 'Type RESET to confirm. This will clear the selected tracker history from this device.'}
+                  </p>
+                </div>
+                {resetFlow.step === 1 ? (
+                  <>
+                    <div className="button-row">
+                      <button type="button" className="button secondary grow" onClick={() => setResetFlow((prev) => ({ ...prev, mode: 'history' }))}>
+                        {resetFlow.mode === 'history' ? 'Selected: ' : ''}Reset History Only
+                      </button>
+                      <button type="button" className="button secondary grow" onClick={() => setResetFlow((prev) => ({ ...prev, mode: 'everything' }))}>
+                        {resetFlow.mode === 'everything' ? 'Selected: ' : ''}Reset Everything
+                      </button>
+                    </div>
+                    <div className="button-row">
+                      <button type="button" className="button primary grow" onClick={() => setResetFlow((prev) => ({ ...prev, step: 2, confirmText: '' }))}>Continue</button>
+                      <button type="button" className="button ghost grow" onClick={() => setResetFlow({ open: false, step: 1, mode: 'history', confirmText: '' })}>Cancel</button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <label className="field">
+                      <span>Confirmation</span>
+                      <input value={resetFlow.confirmText} onChange={(event) => setResetFlow((prev) => ({ ...prev, confirmText: event.target.value }))} placeholder="Type RESET" />
+                    </label>
+                    <div className="button-row">
+                      <button type="button" className="button danger-button grow" disabled={resetConfirmDisabled} onClick={() => resetAllHistory(resetFlow.mode === 'history')}>
+                        Confirm Reset
+                      </button>
+                      <button type="button" className="button secondary grow" onClick={() => setResetFlow((prev) => ({ ...prev, step: 1, confirmText: '' }))}>Back</button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {restTimerOverlay && (
         <div className="timer-complete-overlay" role="dialog" aria-modal="true" aria-labelledby="timer-complete-title">
           <div className="timer-complete-card">
@@ -2548,6 +3188,50 @@ export default function WorkoutTrackerApp() {
               <button type="button" className="button ghost full" onClick={dismissRestTimerOverlay}>
                 Dismiss
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSessionBriefing && (
+        <div className="briefing-overlay" role="dialog" aria-modal="true" aria-labelledby="briefing-title">
+          <div className="briefing-card">
+            <p className="eyebrow">Coach briefing</p>
+            <h2 id="briefing-title">{sessionBriefing.title}</h2>
+            <p className="muted">{sessionBriefing.lastLine}</p>
+            {sessionBriefing.skippedLine && <p className="muted">{sessionBriefing.skippedLine}</p>}
+            {sessionBriefing.flags.length > 0 && (
+              <div className="briefing-section">
+                <strong>Watch</strong>
+                {sessionBriefing.flags.slice(0, 2).map((flag) => (
+                  <p key={`${flag.exercise}-${flag.issue}`}>{flag.exercise}: {flag.label || flag.issue}</p>
+                ))}
+              </div>
+            )}
+            {sessionBriefing.focus.length > 0 && (
+              <div className="briefing-section">
+                <strong>Today's Focus</strong>
+                {sessionBriefing.focus.map((item) => <p key={item}>{item}</p>)}
+              </div>
+            )}
+            {sessionBriefing.targets.length > 0 && (
+              <div className="briefing-section">
+                <strong>Progression unlock</strong>
+                {sessionBriefing.targets.slice(0, 2).map((target) => (
+                  <p key={target.exercise}>{target.exercise}: {target.unlockCondition || target.reason}</p>
+                ))}
+              </div>
+            )}
+            {reviewBriefingSummary && (
+              <div className="summary-box">
+                <strong>Last summary</strong>
+                <p>{lastSameDaySession.completedExercises.length} completed, {lastSameDaySession.skippedExercises.length} skipped. Top: {lastSameDaySession.topPerformance}</p>
+              </div>
+            )}
+            <div className="button-grid briefing-actions">
+              <button type="button" className="button primary" onClick={dismissBriefingToday}>Start Session</button>
+              <button type="button" className="button secondary" onClick={() => setReviewBriefingSummary((prev) => !prev)}>Review Last Summary</button>
+              <button type="button" className="button ghost" onClick={dismissBriefingToday}>Don't show again today</button>
             </div>
           </div>
         </div>
