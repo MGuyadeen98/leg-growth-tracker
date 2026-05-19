@@ -400,26 +400,6 @@ const buildProgressionPrescription = ({ decision, exercise, blocker, unlockCondi
   return `${decision.exercise}: Repeat ${target}. ${blocker} ${unlockCondition}`
 }
 
-const buildTodayProgressionTargets = (exercises, getExerciseTarget) => exercises
-  .filter((exercise) => isLoadBasedType(getActivityType(exercise)))
-  .map((exercise) => {
-    const target = getExerciseTarget(exercise)
-    const targetReps = getTargetReps(exercise)
-    const loadText = target.load ? formatLoadTarget(target.load, exercise) : exercise.load || 'prescribed load'
-    const priorFlag = target.decision && /hold|reduce|block/i.test(target.decision)
-    const standard = `${exercise.name}: Today: ${loadText} x ${exercise.reps}.`
-
-    if (priorFlag && /stability|coordination|asymmetry|form|pain/i.test(`${target.reason} ${target.decision}`)) {
-      return `${standard} Priority: clear the prior flag before increasing load.`
-    }
-
-    if (String(exercise.name).toLowerCase().includes('db press')) {
-      return `${standard} Earn progression by hitting all ${exercise.sets} sets at ${targetReps.high} reps with balanced lockout.`
-    }
-
-    return `${standard} Earn progression by hitting all ${exercise.sets} sets at ${targetReps.high} reps with 1-2 RIR and no form flags.`
-  })
-
 const getWorkoutState = ({ sessionTimer, sessionLogs, currentCompletionSummary, isTodayCompleted }) => {
   if (currentCompletionSummary || isTodayCompleted) return 'completed'
   if (sessionTimer.status === 'running' || sessionTimer.status === 'paused' || sessionLogs.length > 0) return 'inProgress'
@@ -428,8 +408,15 @@ const getWorkoutState = ({ sessionTimer, sessionLogs, currentCompletionSummary, 
 
 const shouldShowNextTimeProgression = (workoutState) => workoutState === 'completed' || workoutState === 'viewingHistory'
 
-const getStartButtonClass = (workoutState) =>
-  workoutState === 'notStarted' ? 'button primary pulse-start' : 'button primary'
+const getTimerPrimaryAction = (timerStatus) => {
+  if (timerStatus === 'running') {
+    return { label: 'Pause', icon: 'pause', action: 'pause', className: 'button secondary' }
+  }
+  if (timerStatus === 'paused') {
+    return { label: 'Resume', icon: 'play', action: 'start', className: 'button primary' }
+  }
+  return { label: 'Start Workout', icon: 'play', action: 'start', className: 'button primary pulse-start' }
+}
 
 const shouldConfirmDaySwitch = ({ currentDay, targetDay, sessionTimer, sessionLogs, currentCompletionSummary }) =>
   currentDay !== targetDay
@@ -649,27 +636,53 @@ const clearObjectPrefix = (object, prefix) => Object.fromEntries(
 const getLastSameDaySession = (completedSessions, day, currentSessionId) =>
   completedSessions.find((session) => session.day === day && session.sessionId !== currentSessionId) || null
 
+const targetBelongsToDay = (target, day) =>
+  weeklyPlan[day]?.exercises.some((exercise) => exercise.name === target.exercise) || false
+
+const getTargetFocusLine = (target) => {
+  const exercise = findExerciseByName(target.exercise) || {}
+  const shortName = exercise.key ? (prMeta[exercise.key]?.short || target.exercise) : target.exercise
+  const text = `${target.reason || ''} ${target.decision || ''} ${target.blocker || ''} ${target.unlockCondition || ''}`
+
+  if (/pain/i.test(text)) return `${shortName}: keep this pain-free before chasing load.`
+  if (/tilt|stability|asymmetry|coordination|form|lockout/i.test(text)) return `${shortName}: repeat the target until the flagged mechanics clean up.`
+  if (/fatigue|near limit|readiness|declined/i.test(text)) return `${shortName}: hold the target and make it feel cleaner today.`
+  if (/increase|progress/i.test(String(target.decision))) return `${shortName} can progress if today's sets stay clean.`
+  return null
+}
+
 const buildTodayFocus = ({ day, lastSummary, nextTargets }) => {
   if (!lastSummary) return []
   const isSprintDay = day === 'Saturday'
-  const focus = []
+  const focus = new Set()
 
   if (isSprintDay) {
     const sprintFlag = lastSummary.sprintNotes?.find((note) => /dropping|fatigue|quality/i.test(note))
-    focus.push(sprintFlag ? 'Keep sprint quality high; stop if mechanics drop.' : 'Keep sprint quality high and use full recovery.')
-    focus.push('Extend rest if speed quality falls before planned reps are complete.')
-    return focus.slice(0, 3)
+    if (sprintFlag) {
+      focus.add('Keep sprint quality high; stop if mechanics drop.')
+      focus.add('Extend rest if speed quality falls before planned reps are complete.')
+    }
+    if (lastSummary.skippedExercises?.length) focus.add(`Finish the missed track item: ${lastSummary.skippedExercises[0]}.`)
+    return [...focus].slice(0, 3)
   }
 
-  const targetEntries = Object.values(nextTargets || {}).filter((target) => target.type !== 'sprint')
-  const flag = lastSummary.formFlags?.[0]
-  const firstTarget = targetEntries[0]
+  const targetEntries = Object.values(nextTargets || {})
+    .filter((target) => target.type !== 'sprint' && targetBelongsToDay(target, day))
+  const primaryFlag = lastSummary.formFlags?.[0]
+  const flaggedTarget = targetEntries.find((target) => (
+    primaryFlag && target.exercise === primaryFlag.exercise
+  ))
+  const cautionTargets = targetEntries.filter((target) => /hold|reduce|block/i.test(`${target.decision} ${target.reason}`))
+  const progressTarget = targetEntries.find((target) => /increase|progress/i.test(String(target.decision)))
 
-  if (firstTarget?.unlockCondition) focus.push(firstTarget.unlockCondition.replace(/^Progress when /, 'Earn progression by '))
-  if (flag) focus.push(`Watch: ${flag.exercise} ${flag.label || flag.issue}.`)
-  if (firstTarget?.blocker) focus.push(firstTarget.blocker)
+  if (primaryFlag) focus.add(`Watch ${primaryFlag.exercise}: ${primaryFlag.label || primaryFlag.issue}.`)
+  ;[flaggedTarget, ...cautionTargets, progressTarget].filter(Boolean).forEach((target) => {
+    const line = getTargetFocusLine(target)
+    if (line) focus.add(line)
+  })
+  if (lastSummary.skippedExercises?.length) focus.add(`Finish missed work: ${lastSummary.skippedExercises[0]}.`)
 
-  return focus.slice(0, 3)
+  return [...focus].slice(0, 3)
 }
 
 const buildSessionBriefing = ({ day, lastSummary, nextTargets }) => {
@@ -1534,7 +1547,18 @@ const runHelperTests = () => {
   const freshWorkoutState = getWorkoutState({ sessionTimer: createTimer(50), sessionLogs: [], currentCompletionSummary: null, isTodayCompleted: false })
   const inProgressWorkoutState = getWorkoutState({ sessionTimer: { ...createTimer(50), status: 'running', startedAt: 1000 }, sessionLogs: [], currentCompletionSummary: null, isTodayCompleted: false })
   const completedWorkoutState = getWorkoutState({ sessionTimer: createTimer(50), sessionLogs: [], currentCompletionSummary: lastMondaySummary, isTodayCompleted: true })
-  const todayTargets = buildTodayProgressionTargets([strengthExercise], () => ({ load: 225, reason: 'Base target' }))
+  const usefulTodayFocus = buildTodayFocus({
+    day: 'Monday',
+    lastSummary: {
+      ...lastMondaySummary,
+      formFlags: [{ exercise: 'Heel-Elevated Bulgarian Split Squat', issue: 'tilt', label: 'Stability issue' }],
+    },
+    nextTargets: buildNextTargets([formIssueDecision, cleanMainLiftDecision]),
+  })
+  const quietTodayFocus = buildTodayFocus({ day: 'Monday', lastSummary: lastMondaySummary, nextTargets: {} })
+  const startTimerAction = getTimerPrimaryAction('idle')
+  const runningTimerAction = getTimerPrimaryAction('running')
+  const pausedTimerAction = getTimerPrimaryAction('paused')
   const emptyChartCard = buildStrengthTrajectory(strengthExercise.name, [], '8')
   const oneExposureChartCard = buildStrengthTrajectory(strengthExercise.name, [trendStrengthLogs[0]], '8')
   const multiExposureChartCard = buildStrengthTrajectory(strengthExercise.name, trendStrengthLogs, '8')
@@ -1601,12 +1625,16 @@ const runHelperTests = () => {
     { name: 'completed state takes priority over briefing', pass: !shouldShowBriefing({ briefing: mondayBriefing, sessionTimer: createTimer(50), sessionLogs: [], isTodayCompleted: true, dismissedBriefings: {}, briefingKey: '2026-05-18:Monday' }) },
     { name: "Don't show again today suppresses briefing", pass: !shouldShowBriefing({ briefing: mondayBriefing, sessionTimer: createTimer(50), sessionLogs: [], isTodayCompleted: false, dismissedBriefings: { '2026-05-18:Monday': true }, briefingKey: '2026-05-18:Monday' }) },
     { name: 'fresh session does not show Next-Time Progression', pass: !shouldShowNextTimeProgression(freshWorkoutState) },
-    { name: 'fresh session shows Today’s Progression Targets', pass: todayTargets[0].includes('Earn progression') },
-    { name: 'in-progress session shows Today’s Progression Targets', pass: inProgressWorkoutState === 'inProgress' && !shouldShowNextTimeProgression(inProgressWorkoutState) },
+    { name: 'verbose Today’s Progression Targets no longer renders', pass: usefulTodayFocus.every((item) => !/Earn progression by hitting all|Today:/.test(item)) },
+    { name: 'Today’s Focus shows only 1-3 useful items', pass: usefulTodayFocus.length > 0 && usefulTodayFocus.length <= 3 },
+    { name: 'Today’s Focus hides when not useful', pass: quietTodayFocus.length === 0 },
+    { name: 'in-progress session avoids duplicate progression cards', pass: inProgressWorkoutState === 'inProgress' && !shouldShowNextTimeProgression(inProgressWorkoutState) && usefulTodayFocus.length <= 3 },
     { name: 'completed session shows Next-Time Progression', pass: shouldShowNextTimeProgression(completedWorkoutState) },
-    { name: 'incomplete-data warnings only appear after completion', pass: !todayTargets.join(' ').includes('0/4') && incompleteProgressionText.includes('2/4') },
-    { name: 'Start Workout button pulses before start', pass: getStartButtonClass(freshWorkoutState).includes('pulse-start') },
-    { name: 'Start Workout pulse stops after session starts', pass: !getStartButtonClass(inProgressWorkoutState).includes('pulse-start') },
+    { name: 'completed workout still shows true Next-Time Progression', pass: shouldShowNextTimeProgression(completedWorkoutState) && Boolean(incompleteProgressionText) },
+    { name: 'incomplete-data warnings only appear after completion', pass: usefulTodayFocus.join(' ').includes('0/4') === false && incompleteProgressionText.includes('2/4') },
+    { name: 'timer controls are consistent across states', pass: startTimerAction.action === 'start' && runningTimerAction.action === 'pause' && pausedTimerAction.action === 'start' },
+    { name: 'Start Workout button pulses before start', pass: startTimerAction.className.includes('pulse-start') },
+    { name: 'Start Workout pulse stops after session starts', pass: !runningTimerAction.className.includes('pulse-start') && !pausedTimerAction.className.includes('pulse-start') },
     { name: 'reduced-motion mode does not rely on animation', pass: true },
     { name: 'no exposures shows locked empty chart state', pass: getChartState(emptyChartCard, 'topWeight') === 'locked' },
     { name: 'one exposure shows point but insufficient trend state', pass: getChartState(oneExposureChartCard, 'topWeight') === 'insufficient' && buildChartData(oneExposureChartCard, 'topWeight').length === 1 },
@@ -2192,7 +2220,7 @@ export default function WorkoutTrackerApp() {
   const isTodayCompleted = Boolean(completedWorkoutKeys[completionKey] && currentCompletionSummary && sessionId === completedWorkoutKeys[completionKey])
   const workoutState = getWorkoutState({ sessionTimer, sessionLogs, currentCompletionSummary, isTodayCompleted })
   const showNextTimeProgression = shouldShowNextTimeProgression(workoutState)
-  const todayProgressionTargets = useMemo(() => buildTodayProgressionTargets(session.exercises, getExerciseTarget), [session.exercises, getExerciseTarget])
+  const timerPrimaryAction = getTimerPrimaryAction(sessionTimer.status)
   const progressionAdvice = (() => {
     if (!showNextTimeProgression) return []
     const items = session.exercises
@@ -2367,15 +2395,13 @@ export default function WorkoutTrackerApp() {
             <span className="badge badge-strong">{formatTime(sessionRemaining)}</span>
           </div>
 
-          <div className="button-grid three">
+          <div className="timer-control-row">
             <button type="button" onClick={() => {
               const timestamp = Date.now()
-              setSessionTimer((prev) => startTimerAt(prev, timestamp))
-            }} className={getStartButtonClass(workoutState)}><Icon name="play" /> {workoutState === 'notStarted' ? 'Start Workout' : 'Resume'}</button>
-            <button type="button" onClick={() => {
-              const timestamp = Date.now()
-              setSessionTimer((prev) => pauseTimerAt(prev, timestamp))
-            }} className="button secondary"><Icon name="pause" /> Pause</button>
+              setSessionTimer((prev) => (
+                timerPrimaryAction.action === 'pause' ? pauseTimerAt(prev, timestamp) : startTimerAt(prev, timestamp)
+              ))
+            }} className={timerPrimaryAction.className}><Icon name={timerPrimaryAction.icon} /> {timerPrimaryAction.label}</button>
             <button type="button" onClick={() => {
               setSessionTimer(createTimer(50 * 60))
             }} className="button secondary icon-only" aria-label="Reset session timer"><Icon name="reset" /></button>
@@ -2769,22 +2795,6 @@ export default function WorkoutTrackerApp() {
                   <p>{item.text}</p>
                 </div>
               )) : <p>No coach recommendations yet.</p>}
-            </div>
-          </div>
-        </section>
-      )}
-
-      {!showNextTimeProgression && (
-        <section className="card">
-          <div className="card-content stack">
-            <div className="section-heading">
-              <Icon name="trend" />
-              <h2>Today's Progression Targets</h2>
-            </div>
-            <div className="advice-list">
-              {todayProgressionTargets.length ? todayProgressionTargets.map((line) => (
-                <p key={line}>{line}</p>
-              )) : <p>No load progression targets for this session.</p>}
             </div>
           </div>
         </section>
