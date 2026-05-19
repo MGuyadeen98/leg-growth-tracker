@@ -1,4 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 
 const defaultPRs = {
   boxSquat: 315,
@@ -10,18 +19,28 @@ const defaultPRs = {
   weightedPullup: 45,
 }
 
+const prMeta = {
+  boxSquat: { label: 'High-Bar Box Squat', unit: 'lb bar weight', short: 'Box squat' },
+  frontSquat: { label: 'Front Squat', unit: 'lb bar weight', short: 'Front squat' },
+  trapBarDeadlift: { label: 'Trap Bar Deadlift', unit: 'lb total load', short: 'Trap bar' },
+  rdl: { label: 'Romanian Deadlift', unit: 'lb bar weight', short: 'RDL' },
+  inclineDbPress: { label: 'Incline DB Press', unit: 'lb per DB', short: 'Incline DB' },
+  flatDbPress: { label: 'Flat DB Press', unit: 'lb per DB', short: 'Flat DB' },
+  weightedPullup: { label: 'Weighted Pull-Up', unit: 'lb added load', short: 'Pull-up' },
+}
+
 const weeklyPlan = {
   Monday: {
     title: 'Quad Dominant Mass',
     goal: 'Heavy quad stimulus + upper chest',
     cap: '50 min',
     exercises: [
-      { name: 'High-Bar Box Squat', key: 'boxSquat', sets: 4, reps: '6-8', targetTopReps: 8, percent: 0.72, rest: '2:00', note: 'Controlled 2-3 sec lower. Touch box, stay tight, explode up.' },
-      { name: 'Heel-Elevated Bulgarian Split Squat', sets: 3, reps: '8-10/leg', targetTopReps: 10, load: 'DBs: hard but clean', rest: '1:15', note: 'Quad bias. Keep torso upright and knee tracking forward.' },
-      { name: 'Romanian Deadlift', key: 'rdl', sets: 3, reps: '6-8', targetTopReps: 8, percent: 0.7, rest: '1:45', note: 'Hamstrings loaded, not lower-back grindy.' },
-      { name: 'Incline DB Press', key: 'inclineDbPress', sets: 3, reps: '6-10', targetTopReps: 10, percent: 0.75, rest: '1:30', note: 'Upper chest focus. 30-40 degree incline.' },
-      { name: 'Weighted Pull-Up', key: 'weightedPullup', sets: 2, reps: '5-8', targetTopReps: 8, percent: 0.75, rest: '1:30', note: 'Maintain back size without overdoing volume.' },
-      { name: 'Leg Extension', sets: 2, reps: '12-15', targetTopReps: 15, load: 'Hard squeeze', rest: '0:45', note: 'Slow eccentric. Stop 1 rep before form breaks.' },
+      { name: 'High-Bar Box Squat', type: 'strength', key: 'boxSquat', sets: 4, reps: '6-8', targetTopReps: 8, percent: 0.72, rest: '2:00', note: 'Controlled 2-3 sec lower. Touch box, stay tight, explode up.' },
+      { name: 'Heel-Elevated Bulgarian Split Squat', type: 'accessory', sets: 3, reps: '8-10/leg', targetTopReps: 10, load: 'DBs: hard but clean', rest: '1:15', note: 'Quad bias. Keep torso upright and knee tracking forward.' },
+      { name: 'Romanian Deadlift', type: 'strength', key: 'rdl', sets: 3, reps: '6-8', targetTopReps: 8, percent: 0.7, rest: '1:45', note: 'Hamstrings loaded, not lower-back grindy.' },
+      { name: 'Incline DB Press', type: 'strength', key: 'inclineDbPress', sets: 3, reps: '6-10', targetTopReps: 10, percent: 0.75, rest: '1:30', note: 'Upper chest focus. 30-40 degree incline.' },
+      { name: 'Weighted Pull-Up', type: 'strength', key: 'weightedPullup', sets: 2, reps: '5-8', targetTopReps: 8, percent: 0.75, rest: '1:30', note: 'Maintain back size without overdoing volume.' },
+      { name: 'Leg Extension', type: 'accessory', sets: 2, reps: '12-15', targetTopReps: 15, load: 'Hard squeeze', rest: '0:45', note: 'Slow eccentric. Stop 1 rep before form breaks.' },
     ],
   },
   Wednesday: {
@@ -29,12 +48,12 @@ const weeklyPlan = {
     goal: 'Posterior chain growth + upper maintenance',
     cap: '50 min',
     exercises: [
-      { name: 'Trap Bar Deadlift', key: 'trapBarDeadlift', sets: 4, reps: '5-6', targetTopReps: 6, percent: 0.72, rest: '2:00', note: 'Crisp reps. No maxing.' },
-      { name: 'Front Squat', key: 'frontSquat', sets: 3, reps: '6-8', targetTopReps: 8, percent: 0.7, rest: '1:45', note: 'Upright torso. Quad drive.' },
-      { name: 'Nordic Curl or GHR', sets: 3, reps: '5-8', targetTopReps: 8, load: 'Bodyweight', rest: '1:30', note: 'Controlled eccentric. Use assistance if needed.' },
-      { name: 'Flat DB Press', key: 'flatDbPress', sets: 2, reps: '8-10', targetTopReps: 10, percent: 0.72, rest: '1:15', note: 'Maintenance dose.' },
-      { name: 'Chest-Supported Row', sets: 3, reps: '8-12', targetTopReps: 12, load: 'Moderate-heavy', rest: '1:15', note: 'No lower-back fatigue.' },
-      { name: 'Seated Hamstring Curl', sets: 2, reps: '10-12', targetTopReps: 12, load: 'Hard squeeze', rest: '0:45', note: 'Shortened-position hamstring work.' },
+      { name: 'Trap Bar Deadlift', type: 'strength', key: 'trapBarDeadlift', sets: 4, reps: '5-6', targetTopReps: 6, percent: 0.72, rest: '2:00', note: 'Crisp reps. No maxing.' },
+      { name: 'Front Squat', type: 'strength', key: 'frontSquat', sets: 3, reps: '6-8', targetTopReps: 8, percent: 0.7, rest: '1:45', note: 'Upright torso. Quad drive.' },
+      { name: 'Nordic Curl or GHR', type: 'accessory', sets: 3, reps: '5-8', targetTopReps: 8, load: 'Bodyweight', rest: '1:30', note: 'Controlled eccentric. Use assistance if needed.' },
+      { name: 'Flat DB Press', type: 'strength', key: 'flatDbPress', sets: 2, reps: '8-10', targetTopReps: 10, percent: 0.72, rest: '1:15', note: 'Maintenance dose.' },
+      { name: 'Chest-Supported Row', type: 'accessory', sets: 3, reps: '8-12', targetTopReps: 12, load: 'Moderate-heavy', rest: '1:15', note: 'No lower-back fatigue.' },
+      { name: 'Seated Hamstring Curl', type: 'accessory', sets: 2, reps: '10-12', targetTopReps: 12, load: 'Hard squeeze', rest: '0:45', note: 'Shortened-position hamstring work.' },
     ],
   },
   Friday: {
@@ -42,12 +61,12 @@ const weeklyPlan = {
     goal: 'Stay springy for Saturday speed work',
     cap: '40-45 min',
     exercises: [
-      { name: 'Dynamic Box Squat', key: 'boxSquat', sets: 6, reps: '2', targetTopReps: 2, percent: 0.55, rest: '1:00', note: 'Fast bar speed. Leave feeling better than when you started.' },
-      { name: 'Jump Squat or Clean Pull', sets: 4, reps: '3', targetTopReps: 3, load: 'Light/moderate', rest: '1:00', note: 'Explosive only. No grinding.' },
-      { name: 'Walking Lunge', sets: 2, reps: '10/leg', targetTopReps: 10, load: 'Moderate', rest: '1:00', note: 'Keep this easy enough to preserve Saturday.' },
-      { name: 'Incline Machine Press', sets: 3, reps: '10', targetTopReps: 10, load: 'Moderate', rest: '1:00', note: 'Upper chest frequency.' },
-      { name: 'Pull-Up or Lat Pulldown', sets: 2, reps: '8', targetTopReps: 8, load: 'Moderate', rest: '1:00', note: 'Maintenance only.' },
-      { name: 'Calves', sets: 3, reps: '10-15', targetTopReps: 15, load: 'Controlled', rest: '0:45', note: 'Useful for sprint elasticity.' },
+      { name: 'Dynamic Box Squat', type: 'strength', key: 'boxSquat', sets: 6, reps: '2', targetTopReps: 2, percent: 0.55, rest: '1:00', note: 'Fast bar speed. Leave feeling better than when you started.' },
+      { name: 'Jump Squat or Clean Pull', type: 'accessory', sets: 4, reps: '3', targetTopReps: 3, load: 'Light/moderate', rest: '1:00', note: 'Explosive only. No grinding.' },
+      { name: 'Walking Lunge', type: 'accessory', sets: 2, reps: '10/leg', targetTopReps: 10, load: 'Moderate', rest: '1:00', note: 'Keep this easy enough to preserve Saturday.' },
+      { name: 'Incline Machine Press', type: 'accessory', sets: 3, reps: '10', targetTopReps: 10, load: 'Moderate', rest: '1:00', note: 'Upper chest frequency.' },
+      { name: 'Pull-Up or Lat Pulldown', type: 'accessory', sets: 2, reps: '8', targetTopReps: 8, load: 'Moderate', rest: '1:00', note: 'Maintenance only.' },
+      { name: 'Calves', type: 'accessory', sets: 3, reps: '10-15', targetTopReps: 15, load: 'Controlled', rest: '0:45', note: 'Useful for sprint elasticity.' },
     ],
   },
   Saturday: {
@@ -55,14 +74,15 @@ const weeklyPlan = {
     goal: 'Pure speed, no conditioning junk',
     cap: 'Quality only',
     exercises: [
-      { name: 'Warm-Up + Drills', sets: 1, reps: '15-20 min', load: 'Mobility + buildups', rest: '-', note: 'Gradually open up speed.' },
-      { name: 'Acceleration or Speed Work', sets: 4, reps: '30-60m OR 120-150m', load: 'Full recovery', rest: '3:00', note: 'Stop when speed drops. Take 3-6 min between reps as needed.' },
-      { name: 'Cooldown', sets: 1, reps: '5-10 min', load: 'Easy', rest: '-', note: 'Keep legs fresh for next week.' },
+      { name: 'Warm-Up + Drills', type: 'mobility/warmup', sets: 1, reps: '15-20 min', load: 'Mobility + buildups', rest: '-', note: 'Gradually open up speed.' },
+      { name: 'Acceleration or Speed Work', type: 'sprint', sets: 4, reps: '30-60m OR 120-150m', load: 'Full recovery', rest: '3:00', note: 'Stop when speed drops. Take 3-6 min between reps as needed.' },
+      { name: 'Cooldown', type: 'cooldown', sets: 1, reps: '5-10 min', load: 'Easy', rest: '-', note: 'Keep legs fresh for next week.' },
     ],
   },
 }
 
-const STORAGE_KEY = 'leg-growth-tracker:v1'
+const STORAGE_KEY = 'leg-growth-tracker:v2'
+const LEGACY_STORAGE_KEY = 'leg-growth-tracker:v1'
 
 const icons = {
   check: 'M20 6 9 17l-5-5',
@@ -87,23 +107,131 @@ function Icon({ name, className = '' }) {
   )
 }
 
+const getTodayKey = () => {
+  const now = new Date()
+  const offset = now.getTimezoneOffset()
+  return new Date(now.getTime() - offset * 60 * 1000).toISOString().slice(0, 10)
+}
+
+const scheduleOrder = ['Monday', 'Wednesday', 'Friday', 'Saturday']
+const weekdayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+const getWeekdayName = (dateKey = getTodayKey()) => weekdayNames[new Date(`${dateKey}T12:00:00`).getDay()]
+
+const getNextProgrammedDay = (dateKey = getTodayKey()) => {
+  const weekday = new Date(`${dateKey}T12:00:00`).getDay()
+  const dayIndexes = { Monday: 1, Wednesday: 3, Friday: 5, Saturday: 6 }
+  return scheduleOrder.find((planDay) => dayIndexes[planDay] > weekday) || 'Monday'
+}
+
+const getScheduledDayInfo = (dateKey = getTodayKey()) => {
+  const weekday = getWeekdayName(dateKey)
+  const programmedDay = weeklyPlan[weekday] ? weekday : null
+  const nextDay = programmedDay || getNextProgrammedDay(dateKey)
+  return {
+    weekday,
+    programmedDay,
+    nextDay,
+    isProgrammed: Boolean(programmedDay),
+  }
+}
+
+const createSessionId = (dateKey, day, instance = 1) =>
+  `${dateKey}:${day}${instance > 1 ? `:${instance}` : ''}`
+
+const createCompletionKey = (dateKey, day) => `${dateKey}:${day}`
+
+const createTimer = (duration) => ({
+  duration,
+  status: 'idle',
+  startedAt: null,
+  pausedRemaining: duration,
+})
+
+const getTimerRemaining = (timer, now) => {
+  if (!timer) return 0
+  if (timer.status !== 'running') return Math.max(0, Math.round(timer.pausedRemaining || 0))
+  const elapsed = Math.floor((now - timer.startedAt) / 1000)
+  return Math.max(0, Math.round((timer.pausedRemaining || timer.duration || 0) - elapsed))
+}
+
+const startTimerAt = (timer, timestamp) => {
+  const remaining = getTimerRemaining(timer, timestamp)
+  return {
+    ...timer,
+    status: 'running',
+    startedAt: timestamp,
+    pausedRemaining: remaining > 0 ? remaining : timer.duration,
+  }
+}
+
+const pauseTimerAt = (timer, timestamp) => ({
+  ...timer,
+  status: 'paused',
+  startedAt: null,
+  pausedRemaining: getTimerRemaining(timer, timestamp),
+})
+
+function normalizeStoredState(stored = {}) {
+  const workoutDate = getTodayKey()
+  const schedule = getScheduledDayInfo(workoutDate)
+  const day = schedule.nextDay
+  const sessionInstance = stored.workoutDate === workoutDate && Number.isFinite(stored.sessionInstance) ? stored.sessionInstance : 1
+  const sessionId = createSessionId(workoutDate, day, sessionInstance)
+
+  return {
+    prs: { ...defaultPRs, ...(stored.prs || {}) },
+    day,
+    workoutDate,
+    sessionInstance,
+    sessionId,
+    completed: stored.completed || {},
+    setDrafts: stored.setDrafts || {},
+    sessionLog: Array.isArray(stored.sessionLog) ? stored.sessionLog.map(normalizeLogEntry) : [],
+    readiness: stored.readiness || 'good',
+    restTimers: stored.restTimers || stored.timers || {},
+    sessionTimer: stored.sessionTimer || createTimer(50 * 60),
+    suggestionStatus: stored.suggestionStatus || {},
+    completedSessions: Array.isArray(stored.completedSessions) ? stored.completedSessions.map(normalizeCompletedSession) : [],
+    alertedRestTimers: stored.alertedRestTimers || {},
+    completedWorkoutKeys: stored.completedWorkoutKeys || {},
+    nextTargets: stored.nextTargets || {},
+    progressionDecisions: Array.isArray(stored.progressionDecisions) ? stored.progressionDecisions : [],
+  }
+}
+
+function migrateLegacyLog(entry, fallbackDate) {
+  const safeEntry = entry && typeof entry === 'object' ? entry : {}
+  const date = safeEntry.dateKey || safeEntry.isoDate || fallbackDate
+  return {
+    ...safeEntry,
+    date,
+    sessionId: safeEntry.sessionId || createSessionId(date, safeEntry.day || 'Monday'),
+    loggedAt: safeEntry.loggedAt || new Date().toISOString(),
+    sets: safeEntry.sets || [],
+  }
+}
+
 function loadStoredState() {
   try {
-    const stored = JSON.parse(window.localStorage.getItem(STORAGE_KEY) || '{}')
-    return {
-      prs: { ...defaultPRs, ...(stored.prs || {}) },
-      day: weeklyPlan[stored.day] ? stored.day : 'Monday',
-      completed: stored.completed || {},
-      feedback: stored.feedback || {},
-      sessionLog: Array.isArray(stored.sessionLog) ? stored.sessionLog : [],
-      readiness: stored.readiness || 'good',
-      timers: stored.timers || {},
-      activeTimers: stored.activeTimers || {},
-      sessionSeconds: Number.isFinite(stored.sessionSeconds) ? stored.sessionSeconds : 50 * 60,
-      sessionRunning: Boolean(stored.sessionRunning),
-    }
+    const stored = JSON.parse(window.localStorage.getItem(STORAGE_KEY) || 'null')
+    if (stored) return normalizeStoredState(stored)
+
+    const legacy = JSON.parse(window.localStorage.getItem(LEGACY_STORAGE_KEY) || 'null')
+    if (!legacy) return normalizeStoredState()
+
+    const workoutDate = getTodayKey()
+    return normalizeStoredState({
+      ...legacy,
+      workoutDate,
+      sessionId: createSessionId(workoutDate, legacy.day || 'Monday'),
+      sessionLog: Array.isArray(legacy.sessionLog) ? legacy.sessionLog.map((entry) => migrateLegacyLog(entry, workoutDate)) : [],
+      setDrafts: legacy.feedback || {},
+      restTimers: legacy.timers || {},
+      sessionTimer: createTimer(Number.isFinite(legacy.sessionSeconds) ? legacy.sessionSeconds : 50 * 60),
+    })
   } catch {
-    return {}
+    return normalizeStoredState()
   }
 }
 
@@ -127,14 +255,927 @@ const formatTime = (seconds) => {
 }
 
 const formatKey = (key) => key.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase())
+const getPRLabel = (key) => prMeta[key]?.label || formatKey(key)
+const getPRUnit = (key) => prMeta[key]?.unit || 'lb'
+
+const buildDefaultSets = (exercise, workingWeight) =>
+  Array.from({ length: exercise.sets || 1 }, () => ({
+    weight: workingWeight || '',
+    reps: '',
+    rir: '',
+  }))
+
+const getActivityType = (exercise) => exercise.type || (exercise.key ? 'strength' : 'accessory')
+const isChecklistType = (type) => type === 'mobility/warmup' || type === 'cooldown'
+const isLoadBasedType = (type) => type === 'strength' || type === 'accessory'
+
+const findExerciseByName = (name) => Object.values(weeklyPlan)
+  .flatMap((plan) => plan.exercises)
+  .find((exercise) => exercise.name === name)
+
+const normalizeLogEntry = (entry) => {
+  const safeEntry = entry && typeof entry === 'object' ? entry : {}
+  const exerciseName = safeEntry.exercise || 'Unknown exercise'
+  const exercise = findExerciseByName(exerciseName)
+  const fallbackId = [
+    'recovered',
+    safeEntry.sessionId || safeEntry.date || 'unknown-session',
+    exerciseName.replace(/\W+/g, '-').toLowerCase(),
+    safeEntry.loggedAt || safeEntry.time || 'unknown-time',
+  ].join(':')
+
+  return {
+    ...safeEntry,
+    id: safeEntry.id || fallbackId,
+    exercise: exerciseName,
+    type: safeEntry.type || (exercise ? getActivityType(exercise) : 'strength'),
+    sets: Array.isArray(safeEntry.sets) ? safeEntry.sets : [],
+    sprint: safeEntry.sprint && typeof safeEntry.sprint === 'object' ? safeEntry.sprint : null,
+    checklist: safeEntry.checklist && typeof safeEntry.checklist === 'object' ? safeEntry.checklist : null,
+  }
+}
+
+function normalizeCompletedSession(session) {
+  const safeSession = session && typeof session === 'object' ? session : {}
+  const date = safeSession.date || getTodayKey()
+  const day = weeklyPlan[safeSession.day] ? safeSession.day : 'Monday'
+  const normalizedSessionId = safeSession.sessionId || createSessionId(date, day)
+
+  return {
+    id: safeSession.id || `completed-${normalizedSessionId}`,
+    sessionId: normalizedSessionId,
+    date,
+    day,
+    completedAt: safeSession.completedAt || null,
+    completedExercises: Array.isArray(safeSession.completedExercises) ? safeSession.completedExercises.filter(Boolean) : [],
+    skippedExercises: Array.isArray(safeSession.skippedExercises) ? safeSession.skippedExercises.filter(Boolean) : [],
+    topPerformance: safeSession.topPerformance || 'No top set logged yet.',
+    formFlags: Array.isArray(safeSession.formFlags) ? safeSession.formFlags.filter(Boolean) : [],
+    sprintNotes: Array.isArray(safeSession.sprintNotes) ? safeSession.sprintNotes.filter(Boolean) : [],
+    coachRecommendations: Array.isArray(safeSession.coachRecommendations) ? safeSession.coachRecommendations.filter(Boolean) : [],
+  }
+}
+
+const getTargetReps = (exercise) => {
+  const numbers = String(exercise.reps || '').match(/\d+/g)?.map(Number) || []
+  return {
+    low: numbers[0] || exercise.targetTopReps || 1,
+    high: exercise.targetTopReps || numbers[numbers.length - 1] || numbers[0] || 1,
+  }
+}
+
+const getTopLoggedSet = (entry) => {
+  const sets = (entry.sets || [])
+    .map((set) => ({
+      weight: parseNumber(set.weight),
+      reps: parseNumber(set.reps),
+      rir: parseNumber(set.rir),
+    }))
+    .filter((set) => set.weight !== null && set.reps !== null)
+    .sort((a, b) => (b.weight * b.reps) - (a.weight * a.reps))
+
+  return sets[0] || null
+}
+
+const getExerciseJump = (exercise) => {
+  const name = exercise.name.toLowerCase()
+  if (getActivityType(exercise) === 'accessory') return 5
+  if (name.includes('db')) return 5
+  if (name.includes('pull-up')) return 5
+  if (exercise.key === 'boxSquat' || exercise.key === 'frontSquat' || exercise.key === 'trapBarDeadlift' || exercise.key === 'rdl') return 10
+  return 5
+}
+
+const reduceLoad = (load, percent = 0.95) => (load ? roundToFive(load * percent) : null)
+
+const buildPreviousResultText = (entry) => {
+  if (!entry) return 'No previous result.'
+  if (entry.type === 'sprint') return `${entry.sprint?.reps || '-'} reps, quality ${entry.sprint?.speedQuality || '-'}, fatigue ${entry.sprint?.fatigue || '-'}`
+  const top = getTopLoggedSet(entry)
+  if (!top) return 'Logged without complete set data.'
+  return `${top.weight} x ${top.reps}${top.rir !== null ? ` @ ${top.rir} RIR` : ''}`
+}
+
+const getPerformanceTrend = (exerciseName, history) => {
+  const exposures = history
+    .filter((entry) => entry.exercise === exerciseName && isLoadBasedType(entry.type))
+    .map((entry) => ({ entry, metrics: getStrengthMetrics(entry) }))
+    .filter((item) => item.metrics.volumeLoad > 0)
+    .slice(0, 4)
+
+  if (exposures.length < 2) return 'insufficient'
+  const latest = exposures[0].metrics.volumeLoad
+  const previous = exposures[1].metrics.volumeLoad
+  if (latest > previous * 1.03) return 'improving'
+  if (latest < previous * 0.92) return 'declining'
+  return 'holding'
+}
+
+const createProgressionDecision = ({ entry, exercise, readiness, history, fallbackLoad }) => {
+  const type = entry.type || getActivityType(exercise)
+  const flags = scanCoachSignals(getEntryNotes(entry))
+  const formIssues = createFormInsights(entry)
+  const hasPain = flags.some((flag) => flag.category === 'pain')
+  const hasFormIssue = formIssues.length > 0
+  const highFatigue = readiness === 'flat' || entry.difficulty === 'hard' || flags.some((flag) => flag.category === 'fatigue' || flag.category === 'readiness')
+  const previousResult = buildPreviousResultText(entry)
+  const trend = getPerformanceTrend(entry.exercise, [entry, ...(history || [])])
+
+  if (type === 'sprint') {
+    const speedQuality = entry.sprint?.speedQuality
+    const fatigue = entry.sprint?.fatigue
+    const speedDrop = speedQuality === 'dropping' || flags.some((flag) => flag.category === 'sprint')
+    let decision = 'Maintain quality exposure'
+    let reason = 'Speed work progresses by quality, not load.'
+    let suggestedTarget = 'Repeat quality sprint dose with full recovery.'
+
+    if (hasPain) {
+      decision = 'Reduce sprint intensity/volume'
+      reason = 'Pain or tissue warning appeared in the sprint notes.'
+      suggestedTarget = 'Reduce volume and intensity; stop if symptoms appear.'
+    } else if (speedDrop) {
+      decision = 'Reduce reps or extend rest'
+      reason = 'Speed dropped, so quality is falling before the planned dose is finished.'
+      suggestedTarget = 'Cut 1-2 reps or extend rest until speed is sharp again.'
+    } else if (fatigue === 'high') {
+      decision = 'Hold volume, extend rest'
+      reason = 'High fatigue makes more volume less useful for speed.'
+      suggestedTarget = 'Keep reps stable and use longer recovery.'
+    } else if (speedQuality === 'sharp' && fatigue === 'low') {
+      decision = 'Slightly increase quality exposure'
+      reason = 'Speed quality was high and fatigue stayed low.'
+      suggestedTarget = 'Add one high-quality rep only if mechanics stay sharp.'
+    }
+
+    return { exercise: entry.exercise, type, previousResult, decision, reason, suggestedTarget, flagsConsidered: flags.map((flag) => flag.issue), date: entry.date, sessionId: entry.sessionId }
+  }
+
+  if (!isLoadBasedType(type)) return null
+
+  const targetReps = getTargetReps(exercise)
+  const topSet = getTopLoggedSet(entry)
+  const usableSets = (entry.sets || []).filter((set) => parseNumber(set.reps) !== null)
+  const allTopReps = usableSets.length >= (exercise.sets || 1) && usableSets.every((set) => (parseNumber(set.reps) || 0) >= targetReps.high)
+  const allRirClean = usableSets.length > 0 && usableSets.every((set) => (parseNumber(set.rir) ?? 2) >= 2)
+  const nearLimit = usableSets.some((set) => (parseNumber(set.rir) ?? 2) <= 1)
+  const baseLoad = topSet?.weight || fallbackLoad || null
+  const jump = getExerciseJump(exercise)
+  let decision = 'Hold target'
+  let reason = 'Build cleaner reps before adding load.'
+  let targetLoad = baseLoad
+  let suggestedTarget = baseLoad ? `${baseLoad} lb x ${exercise.reps}` : exercise.load || exercise.reps
+
+  if (hasPain) {
+    decision = 'Block progression'
+    targetLoad = reduceLoad(baseLoad, 0.9)
+    reason = 'Pain was detected, so load progression is paused.'
+    suggestedTarget = targetLoad ? `${targetLoad} lb with reduced range if needed` : 'Reduce range or swap movement if pain remains.'
+  } else if (hasFormIssue) {
+    decision = 'Hold or reduce target'
+    targetLoad = reduceLoad(baseLoad, 0.95)
+    reason = `${formIssues[0].issue} was detected; clean mechanics matter more than adding load.`
+    suggestedTarget = targetLoad ? `${targetLoad} lb x ${exercise.reps}` : 'Hold load and add tempo/control.'
+  } else if (highFatigue || trend === 'declining') {
+    decision = 'Hold target'
+    targetLoad = baseLoad
+    reason = highFatigue ? 'Readiness or fatigue was not good enough to justify loading up.' : 'Performance has declined across recent exposures.'
+    suggestedTarget = baseLoad ? `${baseLoad} lb x ${exercise.reps}` : exercise.load || exercise.reps
+  } else if (type === 'accessory') {
+    if (allTopReps && allRirClean) {
+      decision = 'Progress accessory load slightly'
+      targetLoad = baseLoad ? baseLoad + jump : null
+      reason = 'You reached the top of the rep range cleanly, so a small load bump is appropriate.'
+      suggestedTarget = targetLoad ? `${targetLoad} lb x ${targetReps.low}-${targetReps.high}` : `Add a small load and stay in ${exercise.reps}`
+    } else {
+      decision = 'Add reps before load'
+      reason = 'Accessory work should earn load increases through stable reps and clean control first.'
+      suggestedTarget = baseLoad ? `${baseLoad} lb, aim for more clean reps` : `Aim toward ${exercise.reps} with cleaner tempo`
+    }
+  } else if (allTopReps && allRirClean) {
+    decision = 'Increase target load'
+    targetLoad = baseLoad ? baseLoad + jump : null
+    reason = `You hit the planned reps cleanly with 2+ RIR, so the target increases by ${jump} lb.`
+    suggestedTarget = targetLoad ? `${targetLoad} lb x ${exercise.reps}` : `Increase moderately for ${exercise.reps}`
+  } else if (allTopReps || nearLimit) {
+    decision = 'Hold target'
+    reason = nearLimit ? 'You completed the work near the limit, so repeat before adding load.' : 'You completed the work, but not with enough reserve to progress confidently.'
+    suggestedTarget = baseLoad ? `${baseLoad} lb x ${exercise.reps}` : exercise.reps
+  }
+
+  return {
+    exercise: entry.exercise,
+    type,
+    previousResult,
+    decision,
+    reason,
+    suggestedTarget,
+    targetLoad,
+    targetReps: exercise.reps,
+    flagsConsidered: flags.map((flag) => flag.issue),
+    date: entry.date,
+    sessionId: entry.sessionId,
+  }
+}
+
+const generateProgressionDecisions = ({ logs, plan, readiness, history, getFallbackLoad }) => logs
+  .map((entry) => {
+    const exercise = plan.exercises.find((item) => item.name === entry.exercise)
+    if (!exercise) return null
+    return createProgressionDecision({
+      entry,
+      exercise,
+      readiness,
+      history: history.filter((item) => item.sessionId !== entry.sessionId),
+      fallbackLoad: getFallbackLoad(exercise),
+    })
+  })
+  .filter(Boolean)
+
+const buildNextTargets = (decisions) => decisions.reduce((acc, decision) => ({
+  ...acc,
+  [decision.exercise]: {
+    exercise: decision.exercise,
+    type: decision.type,
+    targetLoad: decision.targetLoad ?? null,
+    targetReps: decision.targetReps || null,
+    suggestedTarget: decision.suggestedTarget,
+    reason: decision.reason,
+    decision: decision.decision,
+    previousResult: decision.previousResult,
+    flagsConsidered: decision.flagsConsidered || [],
+    date: decision.date,
+    sessionId: decision.sessionId,
+  },
+}), {})
+
+const clearObjectPrefix = (object, prefix) => Object.fromEntries(
+  Object.entries(object || {}).filter(([key]) => !key.startsWith(prefix)),
+)
+
+const getDraftForExercise = (draft, exercise, workingWeight) => ({
+  sets: draft?.sets?.length ? draft.sets : buildDefaultSets(exercise, workingWeight),
+  difficulty: draft?.difficulty || '',
+  notes: draft?.notes || '',
+  sprint: {
+    distance: draft?.sprint?.distance || '',
+    reps: draft?.sprint?.reps || '',
+    rest: draft?.sprint?.rest || exercise.rest || '',
+    speedQuality: draft?.sprint?.speedQuality || '',
+    fatigue: draft?.sprint?.fatigue || '',
+    bestRep: draft?.sprint?.bestRep || '',
+    mechanicsNote: draft?.sprint?.mechanicsNote || '',
+  },
+  checklist: {
+    completed: Boolean(draft?.checklist?.completed),
+    notes: draft?.checklist?.notes || '',
+  },
+})
+
+const parseTimerId = (id) => {
+  const [timerDay, rawIdx] = String(id).split('-')
+  const idx = Number(rawIdx)
+  return {
+    day: timerDay,
+    idx,
+    exercise: weeklyPlan[timerDay]?.exercises?.[idx] || null,
+  }
+}
+
+const getRestDurationForTimerId = (id, fallbackTimer) => {
+  const { exercise } = parseTimerId(id)
+  return restToSeconds(exercise?.rest) || fallbackTimer?.duration || 0
+}
+
+const getTimerAlertToken = (timer) => `${timer?.startedAt || 'idle'}:${timer?.duration || 0}`
+
+const getRestTimerAlertCandidates = (restTimers, timestamp, alertedRestTimers) => (
+  Object.entries(restTimers || {})
+    .map(([id, timer]) => ({
+      id,
+      timer,
+      remaining: getTimerRemaining(timer, timestamp),
+      token: getTimerAlertToken(timer),
+      meta: parseTimerId(id),
+    }))
+    .filter(({ timer, remaining, token, id, meta }) => (
+      timer?.status === 'running'
+      && remaining === 0
+      && timer.startedAt
+      && meta.exercise
+      && alertedRestTimers?.[id] !== token
+    ))
+    .sort((a, b) => (b.timer.startedAt || 0) - (a.timer.startedAt || 0))
+)
+
+const getRestTimerAlertCandidate = (restTimers, timestamp, alertedRestTimers) =>
+  getRestTimerAlertCandidates(restTimers, timestamp, alertedRestTimers)[0] || null
+
+const triggerRestTimerHaptic = (navigatorLike = window.navigator) => {
+  try {
+    navigatorLike?.vibrate?.([200, 100, 200])
+    return true
+  } catch {
+    return false
+  }
+}
+
+const dismissRestTimerAlert = () => null
+
+const parseNumber = (value) => {
+  if (value === '' || value === null || value === undefined) return null
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
+
+const summarizeLogEntry = (entry) => {
+  if (!entry) return ''
+  if (entry.type === 'sprint' && entry.sprint) {
+    return `${entry.date || 'previous'}: ${entry.sprint.distance || '-'} x ${entry.sprint.reps || '-'}, speed ${entry.sprint.speedQuality || '-'}, fatigue ${entry.sprint.fatigue || '-'}`
+  }
+  if (isChecklistType(entry.type) && entry.checklist) {
+    return `${entry.date || 'previous'}: ${entry.checklist.completed ? 'completed' : 'not completed'}`
+  }
+  if (isLoadBasedType(entry.type) && entry.sets?.length) {
+    const setSummary = entry.sets
+      .map((set) => `${set.weight ?? '-'}x${set.reps ?? '-'}@${set.rir ?? '-'}RIR`)
+      .join(', ')
+    return `${entry.date || 'previous'}: ${setSummary}`
+  }
+  return `${entry.date || 'previous'}: ${entry.weight || 'as prescribed'}`
+}
+
+const getCompletedExerciseNames = (logs) => new Set(logs.map((entry) => entry.exercise))
+
+const getTopPerformance = (logs) => {
+  const strengthSets = logs
+    .filter((entry) => isLoadBasedType(entry.type))
+    .flatMap((entry) => (entry.sets || []).map((set) => ({
+      exercise: entry.exercise,
+      weight: parseNumber(set.weight) ?? 0,
+      reps: parseNumber(set.reps) ?? 0,
+      rir: parseNumber(set.rir),
+      score: (parseNumber(set.weight) ?? 0) * (parseNumber(set.reps) ?? 0),
+    })))
+    .filter((set) => set.weight > 0 && set.reps > 0)
+    .sort((a, b) => b.score - a.score)
+
+  if (strengthSets[0]) {
+    const top = strengthSets[0]
+    return `${top.exercise}: ${top.weight} x ${top.reps}${top.rir !== null ? ` @ ${top.rir} RIR` : ''}`
+  }
+
+  const sprint = logs.find((entry) => entry.type === 'sprint' && (entry.sprint?.bestRep || entry.sprint?.speedQuality))
+  if (sprint) return `${sprint.exercise}: ${sprint.sprint.bestRep || sprint.sprint.speedQuality}`
+  return 'No top set logged yet.'
+}
+
+const buildCompletedSessionSummary = ({ logs, plan, completed, day, sessionId, workoutDate, readiness }) => {
+  const normalizedLogs = Array.isArray(logs) ? logs.map(normalizeLogEntry) : []
+  const completedNames = getCompletedExerciseNames(normalizedLogs)
+  const skipped = plan.exercises.filter((exercise, idx) => !completed[`${day}-${idx}`] && !completedNames.has(exercise.name))
+  const coach = buildCoachInsights({ logs: normalizedLogs, plan, readiness })
+  const formFlags = uniqueBy(normalizedLogs.flatMap((entry) => createFormInsights(entry)), (item) => `${item.exercise}:${item.issue}`)
+  const sprintNotes = normalizedLogs
+    .filter((entry) => entry.type === 'sprint')
+    .map((entry) => `${entry.exercise}: ${entry.sprint?.speedQuality || 'quality not set'} / fatigue ${entry.sprint?.fatigue || 'not set'}${entry.sprint?.bestRep ? ` / best ${entry.sprint.bestRep}` : ''}`)
+  const completedExercises = uniqueBy(normalizedLogs, (entry) => entry.exercise).map((entry) => entry.exercise)
+
+  return {
+    id: `completed-${sessionId}-${Date.now()}`,
+    sessionId,
+    date: workoutDate,
+    day,
+    completedAt: new Date().toISOString(),
+    completedExercises,
+    skippedExercises: skipped.map((exercise) => exercise.name),
+    topPerformance: getTopPerformance(normalizedLogs),
+    formFlags: formFlags.map((flag) => ({ exercise: flag.exercise, issue: flag.issue, text: flag.text })),
+    sprintNotes,
+    coachRecommendations: [...coach.progression, ...coach.form].slice(0, 4).map((item) => item.text),
+  }
+}
+
+const getEntryDateMs = (entry) => {
+  const date = entry.loggedAt || entry.completedAt || entry.date
+  const ms = date ? new Date(date).getTime() : 0
+  return Number.isFinite(ms) ? ms : 0
+}
+
+const filterExposures = (exposures, filter) => {
+  const sorted = [...exposures].sort((a, b) => getEntryDateMs(b) - getEntryDateMs(a))
+  if (filter === '4') return sorted.slice(0, 4)
+  if (filter === '8') return sorted.slice(0, 8)
+  if (filter === '1m' || filter === '3m') {
+    const days = filter === '1m' ? 31 : 93
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000
+    return sorted.filter((entry) => getEntryDateMs(entry) >= cutoff)
+  }
+  return sorted
+}
+
+const getStrengthMetrics = (entry) => {
+  const sets = (entry.sets || []).filter((set) => parseNumber(set.weight) !== null && parseNumber(set.reps) !== null)
+  const topWeight = Math.max(0, ...sets.map((set) => parseNumber(set.weight) ?? 0))
+  const volumeLoad = sets.reduce((sum, set) => sum + (parseNumber(set.weight) ?? 0) * (parseNumber(set.reps) ?? 0), 0)
+  const bestSet = sets.reduce((best, set) => {
+    const weight = parseNumber(set.weight) ?? 0
+    const reps = parseNumber(set.reps) ?? 0
+    const score = weight * reps
+    return score > best.score ? { weight, reps, rir: parseNumber(set.rir), score } : best
+  }, { weight: 0, reps: 0, rir: null, score: 0 })
+  const rirs = sets.map((set) => parseNumber(set.rir)).filter((value) => value !== null)
+  const avgRir = rirs.length ? rirs.reduce((sum, rir) => sum + rir, 0) / rirs.length : null
+  return { topWeight, volumeLoad, bestSet, avgRir }
+}
+
+const qualityScore = { dropping: 0, good: 1, sharp: 2 }
+const fatigueScore = { low: 1, moderate: 2, high: 3 }
+
+const getDefaultChartMetric = (card) => {
+  if (card.type === 'sprint') return 'speedQuality'
+  const exercise = findExerciseByName(card.exercise)
+  return getActivityType(exercise || {}) === 'accessory' ? 'volumeLoad' : 'topWeight'
+}
+
+const strengthMetricOptions = [
+  { value: 'topWeight', label: 'Top load' },
+  { value: 'volumeLoad', label: 'Volume' },
+  { value: 'bestSetScore', label: 'Best set' },
+  { value: 'avgRir', label: 'Avg RIR' },
+]
+
+const sprintMetricOptions = [
+  { value: 'reps', label: 'Reps' },
+  { value: 'speedQuality', label: 'Speed quality' },
+  { value: 'fatigue', label: 'Fatigue' },
+  { value: 'bestRep', label: 'Best rep/time' },
+]
+
+const getChartMetricOptions = (type) => (type === 'sprint' ? sprintMetricOptions : strengthMetricOptions)
+
+const parseBestRepValue = (bestRep) => {
+  const number = String(bestRep || '').match(/\d+(\.\d+)?/)?.[0]
+  return number ? Number(number) : null
+}
+
+const getExposureValue = (entry, metric, type) => {
+  if (type === 'sprint') {
+    if (metric === 'reps') return parseNumber(entry.sprint?.reps)
+    if (metric === 'speedQuality') return qualityScore[entry.sprint?.speedQuality] ?? null
+    if (metric === 'fatigue') return fatigueScore[entry.sprint?.fatigue] ?? null
+    if (metric === 'bestRep') return parseBestRepValue(entry.sprint?.bestRep)
+    return null
+  }
+
+  if (metric === 'topWeight') return entry.metrics?.topWeight || null
+  if (metric === 'volumeLoad') return entry.metrics?.volumeLoad || null
+  if (metric === 'bestSetScore') return entry.metrics?.bestSet?.score || null
+  if (metric === 'avgRir') return entry.metrics?.avgRir
+  return null
+}
+
+const buildChartData = (card, metric = getDefaultChartMetric(card)) => card.exposures
+  .map((entry, index) => ({
+    index: index + 1,
+    date: entry.date || entry.loggedAt?.slice(0, 10) || `Exposure ${index + 1}`,
+    value: getExposureValue(entry, metric, card.type),
+    entry,
+  }))
+  .filter((point) => point.value !== null && point.value !== undefined && Number.isFinite(Number(point.value)))
+
+const getChartState = (card, metric = getDefaultChartMetric(card)) => {
+  const points = buildChartData(card, metric)
+  if (card.exposures.length === 0 || points.length === 0) return 'locked'
+  if (points.length === 1) return 'insufficient'
+  return 'ready'
+}
+
+const buildExposureDetails = (card, point, metric = getDefaultChartMetric(card)) => {
+  if (!point) return null
+  const entry = point.entry
+  const issues = createFormInsights(entry)
+  const decision = createProgressionDecision({
+    entry,
+    exercise: findExerciseByName(entry.exercise) || {},
+    readiness: 'good',
+    history: [],
+    fallbackLoad: entry.metrics?.topWeight || getTopLoggedSet(entry)?.weight || null,
+  })
+
+  return {
+    date: point.date,
+    exposure: point.index,
+    metricLabel: getChartMetricOptions(card.type).find((option) => option.value === metric)?.label || metric,
+    metricValue: point.value,
+    topLoad: entry.metrics?.topWeight || null,
+    volume: entry.metrics?.volumeLoad || null,
+    bestSet: entry.metrics?.bestSet?.weight ? `${entry.metrics.bestSet.weight} x ${entry.metrics.bestSet.reps}` : null,
+    avgRir: entry.metrics?.avgRir ?? null,
+    sprint: entry.sprint || null,
+    notes: getEntryNotes(entry),
+    flags: issues.map((issue) => issue.issue),
+    interpretation: issues.length
+      ? `${entry.exercise}: ${issues[0].issue} showed up. Treat this exposure with caution.`
+      : decision?.reason || card.interpretation,
+  }
+}
+
+const buildStrengthTrajectory = (exerciseName, logs, filter) => {
+  const exposures = filterExposures(logs.filter((entry) => entry.exercise === exerciseName && isLoadBasedType(entry.type)), filter)
+    .map((entry) => ({ ...entry, metrics: getStrengthMetrics(entry), issues: createFormInsights(entry) }))
+    .filter((entry) => entry.metrics.volumeLoad > 0)
+    .reverse()
+
+  if (exposures.length < 2) {
+    return {
+      exercise: exerciseName,
+      type: 'strength',
+      label: 'Insufficient data',
+      interpretation: 'Log at least 2-3 exposures before judging progress.',
+      exposures,
+    }
+  }
+
+  const first = exposures[0]
+  const last = exposures[exposures.length - 1]
+  const issues = exposures.flatMap((entry) => entry.issues)
+  const performanceUp = last.metrics.volumeLoad > first.metrics.volumeLoad || last.metrics.bestSet.score > first.metrics.bestSet.score || last.metrics.topWeight > first.metrics.topWeight
+  const performanceDown = last.metrics.volumeLoad < first.metrics.volumeLoad * 0.9 && last.metrics.bestSet.score < first.metrics.bestSet.score
+  const fatigueConcern = /fatigue|sore|tight/i.test(exposures.map(getEntryNotes).join(' '))
+  const formConcern = issues.length > 0
+
+  let label = 'Holding'
+  if (performanceUp && formConcern) label = 'Progressing with caution'
+  else if (performanceUp) label = 'Progressing'
+  else if (performanceDown && fatigueConcern) label = 'Regressing'
+  else if (formConcern && !performanceDown) label = 'Holding / Technical improvement'
+
+  const issueText = issues.length ? `${issues[0].issue} has appeared${issues.length > 1 ? ` ${issues.length} times` : ''}` : 'no major form flags'
+  const interpretation = label === 'Progressing'
+    ? 'Load, reps, or volume are moving up without major form flags. Keep progressing conservatively.'
+    : label === 'Progressing with caution'
+      ? `Performance is improving, but ${issueText}. Hold or make the smallest jump until reps look clean.`
+      : label === 'Regressing'
+        ? 'Performance is down while fatigue signals are up. Treat this as a recovery concern before adding load.'
+        : label.includes('Technical')
+          ? `Load is not the story right now. ${issueText}; prioritize cleaner reps before chasing numbers.`
+          : 'Performance is steady. Keep the load stable and look for cleaner reps or more total reps.'
+
+  return { exercise: exerciseName, type: 'strength', label, interpretation, exposures }
+}
+
+const buildSprintTrajectory = (exerciseName, logs, filter) => {
+  const exposures = filterExposures(logs.filter((entry) => entry.exercise === exerciseName && entry.type === 'sprint'), filter).reverse()
+  if (exposures.length < 2) {
+    return {
+      exercise: exerciseName,
+      type: 'sprint',
+      label: 'Insufficient data',
+      interpretation: 'Log at least 2 sprint exposures before judging speed quality.',
+      exposures,
+    }
+  }
+
+  const first = exposures[0]
+  const last = exposures[exposures.length - 1]
+  const hasDrop = exposures.some((entry) => entry.sprint?.speedQuality === 'dropping' || /speed\s*drop|drop.?off|slowed/i.test(getEntryNotes(entry)))
+  const fatigueRising = (fatigueScore[last.sprint?.fatigue] ?? 0) > (fatigueScore[first.sprint?.fatigue] ?? 0)
+  const qualityImproving = (qualityScore[last.sprint?.speedQuality] ?? 0) > (qualityScore[first.sprint?.speedQuality] ?? 0)
+
+  let label = 'Stable quality'
+  if (hasDrop) label = 'Speed drop concern'
+  else if (fatigueRising) label = 'Fatigue rising'
+  else if (qualityImproving) label = 'Quality improving'
+
+  const interpretation = label === 'Quality improving'
+    ? 'Speed quality is trending up. Keep rest full and stop before mechanics fade.'
+    : label === 'Speed drop concern'
+      ? 'Speed drop showed up. End the session earlier or extend rest so sprint quality stays high.'
+      : label === 'Fatigue rising'
+        ? 'Fatigue is rising across exposures. Reduce reps or increase rest next time.'
+        : 'Quality is stable. Keep the dose similar and chase cleaner, faster reps.'
+
+  return { exercise: exerciseName, type: 'sprint', label, interpretation, exposures }
+}
+
+const buildTrendCards = (logs, filter) => {
+  const safeLogs = Array.isArray(logs) ? logs.map(normalizeLogEntry) : []
+  const plannedNames = Object.values(weeklyPlan)
+    .flatMap((plan) => plan.exercises)
+    .filter((exercise) => isLoadBasedType(getActivityType(exercise)) || getActivityType(exercise) === 'sprint')
+    .map((exercise) => exercise.name)
+  const loggedNames = safeLogs.filter((entry) => isLoadBasedType(entry.type) || entry.type === 'sprint').map((entry) => entry.exercise)
+  const names = [...new Set([...plannedNames, ...loggedNames])]
+  return names.map((name) => {
+    const exercise = findExerciseByName(name)
+    return getActivityType(exercise || {}) === 'sprint'
+      ? buildSprintTrajectory(name, safeLogs, filter)
+      : buildStrengthTrajectory(name, safeLogs, filter)
+  })
+}
+
+function ExposureChart({ card, metric, height = 128, onSelectPoint }) {
+  const points = buildChartData(card, metric)
+  const state = getChartState(card, metric)
+  const metricLabel = getChartMetricOptions(card.type).find((option) => option.value === metric)?.label || metric
+
+  return (
+    <div className="chart-wrap" style={{ '--chart-height': `${height}px` }}>
+      {points.length > 0 && (
+        <ResponsiveContainer width="100%" height={height}>
+          <LineChart data={points} margin={{ top: 12, right: 12, bottom: 4, left: 0 }}>
+            <CartesianGrid stroke="rgba(148, 163, 184, 0.12)" vertical={false} />
+            <XAxis dataKey="index" tick={{ fill: '#a8bdb8', fontSize: 11 }} axisLine={false} tickLine={false} />
+            <YAxis hide domain={['dataMin', 'dataMax']} />
+            <Tooltip
+              cursor={{ stroke: 'rgba(94, 234, 212, 0.35)', strokeWidth: 1 }}
+              contentStyle={{ background: '#10201c', border: '1px solid rgba(94, 234, 212, 0.35)', borderRadius: 8, color: '#f8fafc' }}
+              labelFormatter={(label) => `Exposure ${label}`}
+              formatter={(value) => [value, metricLabel]}
+            />
+            <Line
+              type="monotone"
+              dataKey="value"
+              stroke="#5eead4"
+              strokeWidth={3}
+              dot={{ r: 5, fill: '#07120f', stroke: '#5eead4', strokeWidth: 2, cursor: 'pointer' }}
+              activeDot={{ r: 7, fill: '#99f6e4', stroke: '#042f2e', strokeWidth: 2, onClick: (_, payload) => onSelectPoint?.(payload.payload) }}
+              onClick={(payload) => payload?.activePayload?.[0]?.payload && onSelectPoint?.(payload.activePayload[0].payload)}
+              isAnimationActive={false}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      )}
+      {state !== 'ready' && (
+        <div className="chart-empty-overlay">
+          <strong>{state === 'locked' ? 'Log your first workout to unlock this chart.' : 'Log 2-3 exposures to see a trend.'}</strong>
+        </div>
+      )}
+    </div>
+  )
+}
+
+const NOTE_PATTERNS = [
+  { issue: 'tilt', match: /\btilt|leans?|shift\b/i, category: 'stability' },
+  { issue: 'knee cave', match: /knee\s*cav|valgus/i, category: 'knee' },
+  { issue: 'knee pain', match: /knee\s*pain|pain.*knee/i, category: 'pain' },
+  { issue: 'hip pain', match: /hip\s*pain|pain.*hip/i, category: 'pain' },
+  { issue: 'back pain', match: /back\s*pain|low\s*back|lower\s*back/i, category: 'back' },
+  { issue: 'unstable', match: /unstable|balance|shaky/i, category: 'stability' },
+  { issue: 'slow grind', match: /slow|grind/i, category: 'effort' },
+  { issue: 'soreness', match: /sore|tight/i, category: 'readiness' },
+  { issue: 'fatigue', match: /fatigue|tired|gassed/i, category: 'fatigue' },
+  { issue: 'speed drop', match: /speed\s*drop|slowed|drop.?off/i, category: 'sprint' },
+  { issue: 'hamstring', match: /hamstring/i, category: 'tissue' },
+  { issue: 'quad', match: /quad/i, category: 'tissue' },
+  { issue: 'glute', match: /glute/i, category: 'tissue' },
+  { issue: 'ankle', match: /ankle/i, category: 'joint' },
+]
+
+const uniqueBy = (items, keyFn) => {
+  const seen = new Set()
+  return items.filter((item) => {
+    const key = keyFn(item)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+const getEntryNotes = (entry) => [
+  entry.notes,
+  entry.sprint?.mechanicsNote,
+  entry.checklist?.notes,
+].filter(Boolean).join(' ')
+
+const scanCoachSignals = (text) => {
+  if (!text) return []
+  return NOTE_PATTERNS.filter((pattern) => pattern.match.test(text)).map((pattern) => ({
+    issue: pattern.issue,
+    category: pattern.category,
+  }))
+}
+
+const getCueForIssue = (entry, signal) => {
+  const name = String(entry.exercise || '').toLowerCase()
+  if (signal.issue === 'knee cave') return 'Focus on tracking knees over toes and add banded lateral walks or tempo goblet squats before squatting.'
+  if (signal.category === 'back') return 'Shorten the range slightly, brace before the descent, and emphasize hamstrings instead of chasing depth.'
+  if (signal.category === 'stability' && name.includes('bulgarian')) return 'Add 1-2 bodyweight split squat warm-up sets with a 2-second pause. Keep ribs stacked over pelvis and use a slower eccentric.'
+  if (signal.category === 'stability') return 'Use a slower eccentric, pause in the hardest position, and keep the rep path balanced before adding load.'
+  if (signal.category === 'sprint') return 'Stop the session earlier or increase rest. Quality is more important than volume.'
+  if (signal.category === 'fatigue') return 'Reduce volume by 1-2 reps next week or extend rest intervals.'
+  if (signal.category === 'pain') return 'Do not push through pain. Reduce load or range and keep the next exposure technically clean.'
+  return 'Hold progression until the note clears up for a session.'
+}
+
+const getPrimerForIssue = (entry, signal) => {
+  const name = String(entry.exercise || '').toLowerCase()
+  if (signal.issue === 'knee cave') return 'Optional primer: banded lateral walks or tempo goblet squats.'
+  if (signal.category === 'back' || name.includes('rdl')) return 'Optional adjustment: swap one hard hinge set for seated hamstring curl this week.'
+  if (signal.category === 'stability' && name.includes('bulgarian')) return 'Optional primer: bodyweight split squats with a pause before the loaded sets.'
+  if (signal.category === 'stability') return 'Optional primer: tempo reps or an isometric hold in the weakest position.'
+  if (signal.category === 'sprint') return 'Optional adjustment: cap the session when speed drops, even if planned reps remain.'
+  if (signal.category === 'fatigue') return 'Optional adjustment: reduce sprint volume by 1-2 reps next week.'
+  return 'Optional adjustment: add a light control-focused warm-up set.'
+}
+
+const createFormInsights = (entry) => {
+  const signals = uniqueBy(scanCoachSignals(getEntryNotes(entry)), (signal) => signal.issue)
+  return signals
+    .filter((signal) => ['stability', 'knee', 'back', 'pain', 'sprint', 'fatigue'].includes(signal.category))
+    .map((signal) => ({
+      type: 'form',
+      issue: signal.issue,
+      exercise: entry.exercise || 'Unknown exercise',
+      severity: signal.category === 'pain' ? 'high' : 'medium',
+      text: `${entry.exercise || 'Unknown exercise'}: hold load next time${signal.category === 'pain' || signal.category === 'back' ? ' or reduce it if needed' : ''}. ${getCueForIssue(entry, signal)} ${getPrimerForIssue(entry, signal)} Why: the note suggests a ${signal.issue} limiter, so clean mechanics matter more than load progression.`,
+    }))
+}
+
+const createSprintInsights = (entry, readiness) => {
+  if (entry.type !== 'sprint') return []
+  const insights = []
+  const fatigue = entry.sprint?.fatigue
+  const speedQuality = entry.sprint?.speedQuality
+  const signals = scanCoachSignals(getEntryNotes(entry))
+  const hasSpeedDrop = signals.some((signal) => signal.issue === 'speed drop') || speedQuality === 'dropping'
+  const highFatigue = fatigue === 'high' || readiness === 'flat'
+
+  if (hasSpeedDrop) {
+    insights.push({
+      type: 'form',
+      issue: 'speed drop',
+      exercise: entry.exercise,
+      severity: 'medium',
+      text: `${entry.exercise}: stop the session earlier or increase rest. Quality is more important than volume.`,
+    })
+  }
+  if (highFatigue) {
+    insights.push({
+      type: 'form',
+      issue: 'fatigue',
+      exercise: entry.exercise,
+      severity: 'medium',
+      text: `${entry.exercise}: reduce sprint volume by 1-2 reps next week or extend rest intervals.`,
+    })
+  }
+  return insights
+}
+
+const createProgressionInsight = (entry, exercise, readiness) => {
+  const decision = createProgressionDecision({
+    entry,
+    exercise,
+    readiness,
+    history: [],
+    fallbackLoad: getTopLoggedSet(entry)?.weight || null,
+  })
+  if (!decision || decision.type === 'sprint') return null
+  return {
+    type: 'progression',
+    exercise: entry.exercise,
+    text: `${entry.exercise}: ${decision.decision}. ${decision.reason}`,
+  }
+}
+
+const buildCoachInsights = ({ logs, plan, readiness }) => {
+  const insights = logs.flatMap((entry) => {
+    const exercise = plan.exercises.find((item) => item.name === entry.exercise) || {}
+    return [
+      createProgressionInsight(entry, exercise, readiness),
+      ...createFormInsights(entry),
+      ...createSprintInsights(entry, readiness),
+    ].filter(Boolean)
+  })
+
+  const progression = uniqueBy(insights.filter((item) => item.type === 'progression'), (item) => item.exercise).slice(0, 3)
+  const form = uniqueBy(insights.filter((item) => item.type === 'form'), (item) => `${item.exercise}:${item.issue}`).slice(0, 3)
+  return { progression, form }
+}
+
+const findRepeatedIssueSuggestions = (logs, suggestionStatus) => {
+  const issueMap = logs.reduce((acc, entry) => {
+    createFormInsights(entry).forEach((insight) => {
+      const key = `${entry.exercise}:${insight.issue}`
+      acc[key] = acc[key] || { ...insight, key, count: 0 }
+      acc[key].count += 1
+    })
+    return acc
+  }, {})
+
+  return Object.values(issueMap)
+    .filter((item) => item.count >= 2 && suggestionStatus[item.key] !== 'dismissed' && suggestionStatus[item.key] !== 'accepted')
+    .map((item) => ({
+      ...item,
+      text: `${item.exercise}: ${getPrimerForIssue({ exercise: item.exercise }, { issue: item.issue, category: item.issue === 'knee cave' ? 'knee' : 'stability' })}`,
+    }))
+    .slice(0, 2)
+}
 
 const runHelperTests = () => {
+  const strengthExercise = weeklyPlan.Monday.exercises[0]
+  const sprintExercise = weeklyPlan.Saturday.exercises[1]
+  const warmupExercise = weeklyPlan.Saturday.exercises[0]
+  const strengthLog = { type: 'strength', exercise: strengthExercise.name, sets: Array.from({ length: strengthExercise.sets }, () => ({ reps: 8, rir: 2 })), difficulty: 'good', notes: '', sessionId: 'test' }
+  const sprintLog = { type: 'sprint', exercise: sprintExercise.name, sprint: { speedQuality: 'good', fatigue: 'low' }, notes: '', sessionId: 'test' }
+  const trendStrengthLogs = [
+    { ...strengthLog, date: '2026-05-01', loggedAt: '2026-05-01T12:00:00.000Z', sets: [{ weight: 200, reps: 6, rir: 2 }] },
+    { ...strengthLog, date: '2026-05-08', loggedAt: '2026-05-08T12:00:00.000Z', sets: [{ weight: 210, reps: 8, rir: 2 }] },
+  ]
+  const trendSprintLogs = [
+    { ...sprintLog, date: '2026-05-01', loggedAt: '2026-05-01T12:00:00.000Z', sprint: { reps: '4', speedQuality: 'good', fatigue: 'low' } },
+    { ...sprintLog, date: '2026-05-08', loggedAt: '2026-05-08T12:00:00.000Z', sprint: { reps: '4', speedQuality: 'sharp', fatigue: 'low' } },
+  ]
+  const tiltInsight = createFormInsights({ type: 'accessory', exercise: 'Heel-Elevated Bulgarian Split Squat', notes: 'my body tilts significantly on the right leg' })
+  const kneeCave = buildCoachInsights({
+    logs: [{ type: 'strength', exercise: strengthExercise.name, sets: [{ reps: 8, rir: 2 }], difficulty: 'good', notes: 'knee cave on last reps' }],
+    plan: weeklyPlan.Monday,
+    readiness: 'good',
+  })
+  const expiredRestTimer = startTimerAt(createTimer(1), 1000)
+  const expiredAlert = getRestTimerAlertCandidate({ 'Monday-0': expiredRestTimer }, 3000, {})
+  const alertedExpiredAlert = getRestTimerAlertCandidate({ 'Monday-0': expiredRestTimer }, 3000, { 'Monday-0': getTimerAlertToken(expiredRestTimer) })
+  const addedThirtyTimer = startTimerAt(createTimer(30), 5000)
+  const resetTimerDuration = getRestDurationForTimerId('Monday-0', createTimer(10))
+  const cleanMainLiftDecision = createProgressionDecision({
+    entry: { ...strengthLog, date: '2026-05-18', exercise: strengthExercise.name, sets: Array.from({ length: strengthExercise.sets }, () => ({ weight: 285, reps: 8, rir: 2 })) },
+    exercise: strengthExercise,
+    readiness: 'good',
+    history: [],
+    fallbackLoad: 285,
+  })
+  const formIssueDecision = createProgressionDecision({
+    entry: { type: 'accessory', exercise: 'Heel-Elevated Bulgarian Split Squat', sets: [{ weight: 50, reps: 10, rir: 2 }], notes: 'right side tilt' },
+    exercise: weeklyPlan.Monday.exercises[1],
+    readiness: 'good',
+    history: [],
+    fallbackLoad: 50,
+  })
+  const painDecision = createProgressionDecision({
+    entry: { ...strengthLog, exercise: strengthExercise.name, sets: [{ weight: 285, reps: 8, rir: 2 }], notes: 'knee pain' },
+    exercise: strengthExercise,
+    readiness: 'good',
+    history: [],
+    fallbackLoad: 285,
+  })
+  const accessoryDecision = createProgressionDecision({
+    entry: { type: 'accessory', exercise: 'Leg Extension', sets: [{ weight: 120, reps: 12, rir: 2 }], notes: '' },
+    exercise: weeklyPlan.Monday.exercises[5],
+    readiness: 'good',
+    history: [],
+    fallbackLoad: 120,
+  })
+  const sprintDecision = createProgressionDecision({
+    entry: sprintLog,
+    exercise: sprintExercise,
+    readiness: 'good',
+    history: [],
+    fallbackLoad: null,
+  })
+  const emptyChartCard = buildStrengthTrajectory(strengthExercise.name, [], '8')
+  const oneExposureChartCard = buildStrengthTrajectory(strengthExercise.name, [trendStrengthLogs[0]], '8')
+  const multiExposureChartCard = buildStrengthTrajectory(strengthExercise.name, trendStrengthLogs, '8')
+  const sprintChartCard = buildSprintTrajectory(sprintExercise.name, trendSprintLogs, '8')
+  const selectedDetails = buildExposureDetails(multiExposureChartCard, buildChartData(multiExposureChartCard, 'topWeight')[0], 'topWeight')
+  const cautionChartCard = buildStrengthTrajectory(strengthExercise.name, [...trendStrengthLogs, { ...trendStrengthLogs[1], loggedAt: '2026-05-15T12:00:00.000Z', notes: 'knee pain but load moved' }], '8')
   const tests = [
+    { name: 'app opens Monday workout on Monday', pass: getScheduledDayInfo('2026-05-18').programmedDay === 'Monday' },
+    { name: 'Tuesday shows recovery/next-session state', pass: getScheduledDayInfo('2026-05-19').programmedDay === null && getScheduledDayInfo('2026-05-19').nextDay === 'Wednesday' },
     { name: 'restToSeconds converts 2:00', pass: restToSeconds('2:00') === 120 },
     { name: 'restToSeconds converts dash to zero', pass: restToSeconds('-') === 0 },
     { name: 'formatTime renders 90 seconds', pass: formatTime(90) === '1:30' },
     { name: 'roundToFive rounds 227 to 225', pass: roundToFive(227) === 225 },
     { name: 'Friday has dynamic box squat', pass: weeklyPlan.Friday.exercises.some((exercise) => exercise.name === 'Dynamic Box Squat') },
+    { name: 'strength logs still produce progression advice', pass: Boolean(createProgressionInsight(strengthLog, strengthExercise, 'good')?.text) },
+    { name: 'sprint logs do not produce weight progression advice', pass: createProgressionInsight(sprintLog, sprintExercise, 'good') === null },
+    { name: 'notes with tilt generate form/stability insight', pass: tiltInsight.some((item) => item.text.includes('bodyweight split squat')) },
+    { name: 'notes with knee cave prevent load increase', pass: kneeCave.progression.some((item) => item.text.includes('do not increase load')) },
+    { name: 'Saturday warmup does not show load/RIR fields', pass: isChecklistType(getActivityType(warmupExercise)) },
+    { name: 'Complete Workout saves a completed session summary', pass: buildCompletedSessionSummary({ logs: [strengthLog], plan: weeklyPlan.Monday, completed: { 'Monday-0': true }, day: 'Monday', sessionId: 'test', workoutDate: '2026-05-01', readiness: 'good' }).completedExercises.length === 1 },
+    { name: 'strength logs generate chart data', pass: buildStrengthTrajectory(strengthExercise.name, trendStrengthLogs, '8').label === 'Progressing' },
+    { name: 'sprint logs generate sprint trend data', pass: buildSprintTrajectory(sprintExercise.name, trendSprintLogs, '8').label === 'Quality improving' },
+    { name: 'pain/form notes change interpretation to caution', pass: buildStrengthTrajectory(strengthExercise.name, [...trendStrengthLogs, { ...trendStrengthLogs[1], loggedAt: '2026-05-15T12:00:00.000Z', notes: 'knee pain but load moved' }], '8').label === 'Progressing with caution' },
+    { name: 'empty trend state appears with insufficient data', pass: buildStrengthTrajectory(strengthExercise.name, [trendStrengthLogs[0]], '8').label === 'Insufficient data' },
+    { name: 'rest timer reaches zero and opens overlay once', pass: expiredAlert?.id === 'Monday-0' && alertedExpiredAlert === null },
+    { name: 'Add 30 sec restarts timer', pass: getTimerRemaining(addedThirtyTimer, 5000) === 30 && getTimerRemaining(addedThirtyTimer, 35000) === 0 },
+    { name: 'Dismiss resets rest timer to original time', pass: resetTimerDuration === 120 },
+    { name: 'Dismiss hides overlay state', pass: dismissRestTimerAlert() === null },
+    { name: 'unsupported navigator.vibrate does not crash', pass: triggerRestTimerHaptic({}) === true },
+    { name: 'completing workout clears transient fields', pass: !clearObjectPrefix({ 'Monday-0': true, 'Wednesday-0': true }, 'Monday-')['Monday-0'] },
+    { name: 'completed history remains saved', pass: [buildCompletedSessionSummary({ logs: [strengthLog], plan: weeklyPlan.Monday, completed: { 'Monday-0': true }, day: 'Monday', sessionId: 'test', workoutDate: '2026-05-01', readiness: 'good' })].length === 1 },
+    { name: 'PRs/training maxes remain saved', pass: normalizeStoredState({ prs: { boxSquat: 405 } }).prs.boxSquat === 405 },
+    { name: 'clean main-lift completion increases target appropriately', pass: cleanMainLiftDecision.targetLoad === 295 },
+    { name: 'form issue holds or reduces target', pass: formIssueDecision.targetLoad <= 50 && /mechanics|detected/i.test(formIssueDecision.reason) },
+    { name: 'pain issue blocks progression', pass: painDecision.decision === 'Block progression' },
+    { name: 'accessory uses reps-before-load logic', pass: accessoryDecision.decision === 'Add reps before load' },
+    { name: 'sprint day never generates weight progression', pass: sprintDecision.type === 'sprint' && !sprintDecision.targetLoad },
+    { name: 'no exposures shows locked empty chart state', pass: getChartState(emptyChartCard, 'topWeight') === 'locked' },
+    { name: 'one exposure shows point but insufficient trend state', pass: getChartState(oneExposureChartCard, 'topWeight') === 'insufficient' && buildChartData(oneExposureChartCard, 'topWeight').length === 1 },
+    { name: 'multiple strength exposures render chart data', pass: buildChartData(multiExposureChartCard, 'topWeight').length === 2 },
+    { name: 'sprint exposure renders sprint chart data', pass: buildChartData(sprintChartCard, 'speedQuality').length === 2 },
+    { name: 'selecting exposure displays correct details', pass: selectedDetails?.date === '2026-05-01' && selectedDetails.topLoad === 200 },
+    { name: 'form/pain flags affect chart interpretation', pass: cautionChartCard.label === 'Progressing with caution' },
+    { name: 'sprint charts never use weight/RIR logic', pass: getChartMetricOptions('sprint').every((option) => option.value !== 'topWeight' && option.value !== 'avgRir') },
   ]
 
   return {
@@ -146,121 +1187,320 @@ const runHelperTests = () => {
 
 export default function WorkoutTrackerApp() {
   const initialState = useMemo(() => loadStoredState(), [])
+  const devChecksEnabled = useMemo(() => (
+    import.meta.env.DEV && new URLSearchParams(window.location.search).get('devChecks') === '1'
+  ), [])
   const [prs, setPrs] = useState(initialState.prs || defaultPRs)
   const [day, setDay] = useState(initialState.day || 'Monday')
   const [completed, setCompleted] = useState(initialState.completed || {})
-  const [feedback, setFeedback] = useState(initialState.feedback || {})
+  const [setDrafts, setSetDrafts] = useState(initialState.setDrafts || {})
   const [sessionLog, setSessionLog] = useState(initialState.sessionLog || [])
+  const [completedSessions, setCompletedSessions] = useState(initialState.completedSessions || [])
+  const [completedWorkoutKeys, setCompletedWorkoutKeys] = useState(initialState.completedWorkoutKeys || {})
+  const [nextTargets, setNextTargets] = useState(initialState.nextTargets || {})
+  const [progressionDecisions, setProgressionDecisions] = useState(initialState.progressionDecisions || [])
   const [readiness, setReadiness] = useState(initialState.readiness || 'good')
   const [saved, setSaved] = useState(false)
-  const [timers, setTimers] = useState(initialState.timers || {})
-  const [activeTimers, setActiveTimers] = useState(initialState.activeTimers || {})
-  const [sessionSeconds, setSessionSeconds] = useState(initialState.sessionSeconds ?? 50 * 60)
-  const [sessionRunning, setSessionRunning] = useState(initialState.sessionRunning || false)
+  const [workoutDate, setWorkoutDate] = useState(initialState.workoutDate || getTodayKey())
+  const [sessionInstance, setSessionInstance] = useState(initialState.sessionInstance || 1)
+  const [restTimers, setRestTimers] = useState(initialState.restTimers || {})
+  const [alertedRestTimers, setAlertedRestTimers] = useState(initialState.alertedRestTimers || {})
+  const [sessionTimer, setSessionTimer] = useState(initialState.sessionTimer || createTimer(50 * 60))
+  const [now, setNow] = useState(() => Date.now())
+  const [confirmReset, setConfirmReset] = useState(false)
+  const [suggestionStatus, setSuggestionStatus] = useState(initialState.suggestionStatus || {})
+  const [showTrainingMaxes, setShowTrainingMaxes] = useState(false)
+  const [focusMode, setFocusMode] = useState(false)
+  const [focusIdx, setFocusIdx] = useState(0)
+  const [mainView, setMainView] = useState('workout')
+  const [trendFilter, setTrendFilter] = useState('8')
+  const [chartMetrics, setChartMetrics] = useState({})
+  const [selectedExposure, setSelectedExposure] = useState(null)
+  const [detailExercise, setDetailExercise] = useState(null)
+  const [showCompleteConfirm, setShowCompleteConfirm] = useState(false)
+  const [completionSummary, setCompletionSummary] = useState(null)
+  const [restTimerOverlay, setRestTimerOverlay] = useState(null)
+  const [manualDaySelected, setManualDaySelected] = useState(false)
   const [showTests, setShowTests] = useState(false)
+  const didHydrateTimersRef = useRef(false)
+  const exerciseRefs = useRef({})
+  const importInputRef = useRef(null)
 
   const session = weeklyPlan[day]
-  const testResults = useMemo(() => runHelperTests(), [])
+  const scheduleInfo = getScheduledDayInfo(workoutDate)
+  const isRecoveryState = !scheduleInfo.isProgrammed && !manualDaySelected
+  const sessionId = createSessionId(workoutDate, day, sessionInstance)
+  const completionKey = createCompletionKey(workoutDate, day)
+  const testResults = useMemo(() => (devChecksEnabled ? runHelperTests() : null), [devChecksEnabled])
 
   useEffect(() => {
     const interval = window.setInterval(() => {
-      setTimers((prev) => {
-        const next = { ...prev }
-        Object.keys(activeTimers).forEach((id) => {
-          if (activeTimers[id] && next[id] > 0) {
-            next[id] -= 1
-          }
-        })
-        return next
-      })
-
-      setSessionSeconds((prev) => {
-        if (!sessionRunning) return prev
-        return Math.max(0, prev - 1)
-      })
+      setNow(Date.now())
     }, 1000)
 
     return () => window.clearInterval(interval)
-  }, [activeTimers, sessionRunning])
+  }, [])
 
   useEffect(() => {
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        prs,
-        day,
-        completed,
-        feedback,
-        sessionLog,
-        readiness,
-        timers,
-        activeTimers,
-        sessionSeconds,
-        sessionRunning,
-      }),
-    )
-  }, [prs, day, completed, feedback, sessionLog, readiness, timers, activeTimers, sessionSeconds, sessionRunning])
+    try {
+      window.localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          prs,
+          day,
+          workoutDate,
+          sessionInstance,
+          sessionId,
+          completed,
+          setDrafts,
+          sessionLog,
+          completedSessions: completedSessions.map(normalizeCompletedSession),
+          completedWorkoutKeys,
+          nextTargets,
+          progressionDecisions,
+          readiness,
+          restTimers,
+          alertedRestTimers,
+          sessionTimer,
+          suggestionStatus,
+        }),
+      )
+    } catch {
+      // Private browsing and full storage can both throw. Keep the app usable.
+    }
+  }, [prs, day, workoutDate, sessionInstance, sessionId, completed, setDrafts, sessionLog, completedSessions, completedWorkoutKeys, nextTargets, progressionDecisions, readiness, restTimers, alertedRestTimers, sessionTimer, suggestionStatus])
+
+  useEffect(() => {
+    const candidates = getRestTimerAlertCandidates(restTimers, now, alertedRestTimers)
+    const candidate = candidates[0]
+    if (!candidate) {
+      didHydrateTimersRef.current = true
+      return
+    }
+
+    const nextAlertedTimers = candidates.reduce((acc, item) => ({
+      ...acc,
+      [item.id]: item.token,
+    }), {})
+
+    if (!didHydrateTimersRef.current) {
+      setAlertedRestTimers((prev) => ({ ...prev, ...nextAlertedTimers }))
+      didHydrateTimersRef.current = true
+      return
+    }
+
+    setAlertedRestTimers((prev) => ({ ...prev, ...nextAlertedTimers }))
+    setRestTimerOverlay({
+      id: candidate.id,
+      token: candidate.token,
+      day: candidate.meta.day,
+      idx: candidate.meta.idx,
+      exerciseName: candidate.meta.exercise.name,
+    })
+    triggerRestTimerHaptic()
+  }, [restTimers, now, alertedRestTimers])
 
   const readinessMultiplier = readiness === 'flat' ? 0.95 : readiness === 'great' ? 1.025 : 1
 
-  const getWorkingWeight = (exercise) => {
+  const getWorkingWeight = useCallback((exercise) => {
     if (!exercise.key || !prs[exercise.key] || !exercise.percent) return null
     return roundToFive(prs[exercise.key] * exercise.percent * readinessMultiplier)
-  }
+  }, [prs, readinessMultiplier])
+
+  const getExerciseTarget = useCallback((exercise) => {
+    const savedTarget = nextTargets[exercise.name]
+    const fallbackLoad = getWorkingWeight(exercise)
+    if (savedTarget) {
+      return {
+        load: savedTarget.targetLoad ?? fallbackLoad,
+        reps: savedTarget.targetReps || exercise.reps,
+        label: savedTarget.suggestedTarget || (savedTarget.targetLoad ? `${savedTarget.targetLoad} lb x ${exercise.reps}` : exercise.load || exercise.reps),
+        reason: savedTarget.reason,
+        decision: savedTarget.decision,
+        previousResult: savedTarget.previousResult,
+      }
+    }
+    return {
+      load: fallbackLoad,
+      reps: exercise.reps,
+      label: fallbackLoad ? `${fallbackLoad} lb x ${exercise.reps}` : exercise.load || exercise.reps,
+      reason: fallbackLoad ? 'Initial target is based on your training max and readiness.' : 'Use the prescribed effort target.',
+      decision: 'Base plan target',
+      previousResult: null,
+    }
+  }, [getWorkingWeight, nextTargets])
 
   const updatePR = (key, value) => {
     setPrs((prev) => ({ ...prev, [key]: Number(value) || 0 }))
     setSaved(false)
   }
 
-  const updateFeedback = (idx, field, value) => {
+  const updateDraftField = (idx, field, value) => {
     const id = `${day}-${idx}`
-    setFeedback((prev) => ({
+    setSetDrafts((prev) => ({
       ...prev,
       [id]: { ...prev[id], [field]: value },
     }))
   }
 
-  const startRestTimer = (idx, rest) => {
+  const updateSetDraft = (idx, setIdx, field, value) => {
+    const exercise = session.exercises[idx]
+    const id = `${day}-${idx}`
+    const workingWeight = getExerciseTarget(exercise).load
+
+    setSetDrafts((prev) => {
+      const draft = getDraftForExercise(prev[id], exercise, workingWeight)
+      const sets = draft.sets.map((set, currentIdx) => (
+        currentIdx === setIdx ? { ...set, [field]: value } : set
+      ))
+      return { ...prev, [id]: { ...draft, sets } }
+    })
+  }
+
+  const updateNestedDraft = (idx, group, field, value) => {
+    const id = `${day}-${idx}`
+    const exercise = session.exercises[idx]
+    const workingWeight = getExerciseTarget(exercise).load
+
+    setSetDrafts((prev) => {
+      const draft = getDraftForExercise(prev[id], exercise, workingWeight)
+      return {
+        ...prev,
+        [id]: {
+          ...draft,
+          [group]: {
+            ...draft[group],
+            [field]: value,
+          },
+        },
+      }
+    })
+  }
+
+  const scrollToExercise = (nextIdx) => {
+    window.requestAnimationFrame(() => {
+      exerciseRefs.current[`${day}-${nextIdx}`]?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      })
+    })
+  }
+
+  const moveFocus = (direction) => {
+    const nextIdx = Math.min(session.exercises.length - 1, Math.max(0, focusIdx + direction))
+    setFocusIdx(nextIdx)
+    scrollToExercise(nextIdx)
+  }
+
+  const resetTimer = (duration) => createTimer(duration)
+
+  const startRestTimer = (idx, rest, timestamp) => {
     const id = `${day}-${idx}`
     const seconds = restToSeconds(rest)
     if (!seconds) return
 
-    setTimers((prev) => ({
+    setRestTimers((prev) => ({
       ...prev,
-      [id]: prev[id] && prev[id] > 0 ? prev[id] : seconds,
+      [id]: startTimerAt(prev[id] || createTimer(seconds), timestamp),
     }))
-    setActiveTimers((prev) => ({ ...prev, [id]: true }))
+    setAlertedRestTimers((prev) => {
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
   }
 
-  const pauseRestTimer = (idx) => {
+  const pauseRestTimer = (idx, timestamp) => {
     const id = `${day}-${idx}`
-    setActiveTimers((prev) => ({ ...prev, [id]: false }))
+    setRestTimers((prev) => ({
+      ...prev,
+      [id]: pauseTimerAt(prev[id] || createTimer(restToSeconds(session.exercises[idx].rest)), timestamp),
+    }))
   }
 
   const resetRestTimer = (idx, rest) => {
     const id = `${day}-${idx}`
-    setTimers((prev) => ({ ...prev, [id]: restToSeconds(rest) }))
-    setActiveTimers((prev) => ({ ...prev, [id]: false }))
+    setRestTimers((prev) => ({ ...prev, [id]: resetTimer(restToSeconds(rest)) }))
+    setAlertedRestTimers((prev) => {
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
+    if (restTimerOverlay?.id === id) setRestTimerOverlay(null)
+  }
+
+  const resetRestTimerById = (id) => {
+    setRestTimers((prev) => ({
+      ...prev,
+      [id]: resetTimer(getRestDurationForTimerId(id, prev[id])),
+    }))
+    setAlertedRestTimers((prev) => {
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
+  }
+
+  const dismissRestTimerOverlay = () => {
+    if (restTimerOverlay?.id) resetRestTimerById(restTimerOverlay.id)
+    setRestTimerOverlay(dismissRestTimerAlert())
+  }
+
+  const startNextSetFromOverlay = () => {
+    if (restTimerOverlay?.day && Number.isFinite(restTimerOverlay.idx)) {
+      setDay(restTimerOverlay.day)
+      setFocusIdx(restTimerOverlay.idx)
+    }
+    if (restTimerOverlay?.id) resetRestTimerById(restTimerOverlay.id)
+    setRestTimerOverlay(null)
+  }
+
+  const addThirtySecondsToRestTimer = () => {
+    if (!restTimerOverlay) return
+    const timestamp = Date.now()
+    setRestTimers((prev) => ({
+      ...prev,
+      [restTimerOverlay.id]: startTimerAt(createTimer(30), timestamp),
+    }))
+    setAlertedRestTimers((prev) => {
+      const next = { ...prev }
+      delete next[restTimerOverlay.id]
+      return next
+    })
+    setRestTimerOverlay(null)
   }
 
   const logExercise = (idx) => {
     const exercise = session.exercises[idx]
     const id = `${day}-${idx}`
-    const currentFeedback = feedback[id] || {}
-    const workingWeight = getWorkingWeight(exercise)
+    const target = getExerciseTarget(exercise)
+    const workingWeight = target.load
+    const draft = getDraftForExercise(setDrafts[id], exercise, workingWeight)
+    const type = getActivityType(exercise)
+    const loggedAt = new Date()
 
     const entry = {
       id: `${Date.now()}-${id}`,
+      sessionId,
+      date: workoutDate,
       day,
+      type,
       exercise: exercise.name,
-      target: `${exercise.sets} x ${exercise.reps}`,
+      exerciseKey: exercise.key || null,
+      target: target.label || `${exercise.sets} x ${exercise.reps}`,
       weight: workingWeight ? `${workingWeight} lb` : exercise.load || 'Bodyweight / as prescribed',
-      repsHit: currentFeedback.repsHit || 'not set',
-      difficulty: currentFeedback.difficulty || 'not set',
-      notes: currentFeedback.notes || '',
-      date: new Date().toLocaleDateString(),
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      sets: isLoadBasedType(type) ? draft.sets.map((set, setIdx) => ({
+        set: setIdx + 1,
+        weight: parseNumber(set.weight),
+        reps: parseNumber(set.reps),
+        rir: parseNumber(set.rir),
+      })) : [],
+      sprint: type === 'sprint' ? draft.sprint : null,
+      checklist: isChecklistType(type) ? draft.checklist : null,
+      difficulty: isLoadBasedType(type) ? draft.difficulty || 'not set' : draft.sprint?.speedQuality || (draft.checklist?.completed ? 'completed' : 'not set'),
+      notes: isChecklistType(type) ? draft.checklist.notes : type === 'sprint' ? draft.sprint.mechanicsNote : draft.notes || '',
+      loggedAt: loggedAt.toISOString(),
+      time: loggedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     }
 
     setSessionLog((prev) => [entry, ...prev])
@@ -269,63 +1509,227 @@ export default function WorkoutTrackerApp() {
 
   const resetAll = () => {
     setPrs(defaultPRs)
-    setFeedback({})
+    setSetDrafts({})
     setCompleted({})
     setSessionLog([])
-    setTimers({})
-    setActiveTimers({})
-    setSessionSeconds(50 * 60)
-    setSessionRunning(false)
+    setCompletedSessions([])
+    setCompletedWorkoutKeys({})
+    setNextTargets({})
+    setProgressionDecisions([])
+    setRestTimers({})
+    setAlertedRestTimers({})
+    setSessionTimer(createTimer(50 * 60))
+    setWorkoutDate(getTodayKey())
+    setSessionInstance(1)
+    setSuggestionStatus({})
     setSaved(false)
+    setConfirmReset(false)
+    setCompletionSummary(null)
+    setShowCompleteConfirm(false)
+    setRestTimerOverlay(null)
   }
 
   const savePRs = () => {
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        prs,
-        day,
-        completed,
-        feedback,
-        sessionLog,
-        readiness,
-        timers,
-        activeTimers,
-        sessionSeconds,
-        sessionRunning,
-      }),
-    )
+    try {
+      window.localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          prs,
+          day,
+          workoutDate,
+          sessionInstance,
+          sessionId,
+          completed,
+          setDrafts,
+          sessionLog,
+          completedSessions: completedSessions.map(normalizeCompletedSession),
+          completedWorkoutKeys,
+          nextTargets,
+          progressionDecisions,
+          readiness,
+          restTimers,
+          alertedRestTimers,
+          sessionTimer,
+          suggestionStatus,
+        }),
+      )
+    } catch {
+      // Keep the UI responsive even when browser storage is unavailable.
+    }
     setSaved(true)
   }
 
-  const sessionProgress = useMemo(() => {
-    const total = session.exercises.length
-    const done = session.exercises.filter((_, idx) => completed[`${day}-${idx}`]).length
-    return { done, total, percent: Math.round((done / total) * 100) }
-  }, [completed, day, session.exercises])
+  const exportBackup = () => {
+    const backup = {
+      version: 2,
+      exportedAt: new Date().toISOString(),
+      data: {
+        prs,
+        day,
+        workoutDate,
+        sessionInstance,
+        sessionId,
+        completed,
+        setDrafts,
+        sessionLog,
+        completedSessions,
+        completedWorkoutKeys,
+        nextTargets,
+        progressionDecisions,
+        readiness,
+        restTimers,
+        alertedRestTimers,
+        sessionTimer,
+        suggestionStatus,
+      },
+    }
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `leg-growth-tracker-backup-${getTodayKey()}.json`
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const importBackup = (file) => {
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result || '{}'))
+        const restored = normalizeStoredState(parsed.data || parsed)
+        setPrs(restored.prs)
+        setDay(restored.day)
+        setWorkoutDate(restored.workoutDate)
+        setSessionInstance(restored.sessionInstance)
+        setCompleted(restored.completed)
+        setSetDrafts(restored.setDrafts)
+        setSessionLog(restored.sessionLog)
+        setCompletedSessions(restored.completedSessions.map(normalizeCompletedSession))
+        setCompletedWorkoutKeys(restored.completedWorkoutKeys)
+        setNextTargets(restored.nextTargets)
+        setProgressionDecisions(restored.progressionDecisions)
+        setReadiness(restored.readiness)
+        setRestTimers(restored.restTimers)
+        setAlertedRestTimers(restored.alertedRestTimers)
+        setSessionTimer(restored.sessionTimer)
+        setSuggestionStatus(restored.suggestionStatus)
+        setFocusIdx(0)
+        setSaved(true)
+      } catch {
+        setSaved(false)
+      }
+    }
+    reader.readAsText(file)
+  }
+
+  const clearTransientWorkoutState = (targetDay) => {
+    const prefix = `${targetDay}-`
+    setSetDrafts((prev) => clearObjectPrefix(prev, prefix))
+    setCompleted((prev) => clearObjectPrefix(prev, prefix))
+    setRestTimers((prev) => clearObjectPrefix(prev, prefix))
+    setAlertedRestTimers((prev) => clearObjectPrefix(prev, prefix))
+    setSessionTimer(createTimer(50 * 60))
+    setRestTimerOverlay(null)
+    setShowCompleteConfirm(false)
+    setFocusIdx(0)
+  }
+
+  const finishWorkout = () => {
+    const summary = buildCompletedSessionSummary({
+      logs: sessionLogs,
+      plan: session,
+      completed,
+      day,
+      sessionId,
+      workoutDate,
+      readiness,
+    })
+    const decisions = generateProgressionDecisions({
+      logs: sessionLogs,
+      plan: session,
+      readiness,
+      history: sessionLog,
+      getFallbackLoad: getWorkingWeight,
+    })
+    const generatedTargets = buildNextTargets(decisions)
+    setCompletedSessions((prev) => [summary, ...prev.map(normalizeCompletedSession).filter((item) => item.sessionId !== sessionId)])
+    setCompletedWorkoutKeys((prev) => ({ ...prev, [completionKey]: summary.sessionId }))
+    setProgressionDecisions((prev) => [...decisions, ...prev])
+    setNextTargets((prev) => ({ ...prev, ...generatedTargets }))
+    setCompletionSummary(summary)
+    setSessionTimer((prev) => pauseTimerAt(prev, Date.now()))
+    clearTransientWorkoutState(day)
+  }
+
+  const requestCompleteWorkout = () => {
+    if (completedWorkoutKeys[completionKey] && !sessionLogs.length) return
+    if (sessionProgress.done < sessionProgress.total) {
+      setShowCompleteConfirm(true)
+      return
+    }
+    finishWorkout()
+  }
+
+  const startNewSessionAnyway = () => {
+    const nextInstance = sessionInstance + 1
+    clearTransientWorkoutState(day)
+    setSessionInstance(nextInstance)
+    setCompletionSummary(null)
+  }
+
+  const sessionProgressTotal = session.exercises.length
+  const sessionProgressDone = session.exercises.filter((_, idx) => completed[`${day}-${idx}`]).length
+  const sessionProgress = {
+    done: sessionProgressDone,
+    total: sessionProgressTotal,
+    percent: Math.round((sessionProgressDone / sessionProgressTotal) * 100),
+  }
 
   const progressionAdvice = useMemo(() => {
     const items = session.exercises
       .map((exercise, idx) => {
+        if (!isLoadBasedType(getActivityType(exercise)) || !exercise.key) return null
         const id = `${day}-${idx}`
-        const currentFeedback = feedback[id] || {}
-        if (!exercise.key) return null
-        if (currentFeedback.difficulty === 'easy' && currentFeedback.repsHit === 'yes') return `${exercise.name}: add 5-10 lb next time.`
-        if (currentFeedback.difficulty === 'good' && currentFeedback.repsHit === 'yes') return `${exercise.name}: repeat once, then increase if it feels clean again.`
-        if (currentFeedback.difficulty === 'hard' || currentFeedback.repsHit === 'no') return `${exercise.name}: keep the same weight or reduce 5%.`
-        return null
+        const latest = sessionLog.find((entry) => entry.sessionId === sessionId && entry.exercise === exercise.name)
+        const draft = getDraftForExercise(setDrafts[id], exercise, getExerciseTarget(exercise).load)
+        const entry = latest || {
+          type: getActivityType(exercise),
+          exercise: exercise.name,
+          sets: draft.sets,
+          difficulty: draft.difficulty,
+          notes: draft.notes,
+        }
+        return createProgressionInsight(entry, exercise, readiness)?.text || null
       })
       .filter(Boolean)
 
     return items.length ? items : ['Log reps and difficulty after each main lift to unlock progression advice.']
-  }, [feedback, day, session.exercises])
+  }, [setDrafts, day, session.exercises, sessionId, sessionLog, getExerciseTarget, readiness])
 
   const estimatedMinutes = useMemo(() => {
     const setCount = session.exercises.reduce((sum, exercise) => sum + (exercise.sets || 1), 0)
     return Math.min(50, Math.round(setCount * 2.1))
   }, [session])
 
-  const dayLogs = sessionLog.filter((entry) => entry.day === day)
+  const sessionLogs = sessionLog.filter((entry) => entry.sessionId === sessionId)
+  const coachInsights = useMemo(() => buildCoachInsights({ logs: sessionLogs, plan: session, readiness }), [sessionLogs, session, readiness])
+  const suggestedAdjustments = useMemo(() => findRepeatedIssueSuggestions(sessionLog, suggestionStatus), [sessionLog, suggestionStatus])
+  const trendCards = useMemo(() => buildTrendCards(sessionLog, trendFilter), [sessionLog, trendFilter])
+  const detailCard = detailExercise ? trendCards.find((card) => card.exercise === detailExercise) : null
+  const sessionRemaining = getTimerRemaining(sessionTimer, now)
+  const activeExercise = session.exercises[focusIdx] || session.exercises[0]
+  const activeExerciseTarget = activeExercise ? getExerciseTarget(activeExercise) : null
+  const activeExerciseWeight = activeExerciseTarget?.load || null
+  const activeExerciseLastLog = sessionLog.find((entry) => entry.exercise === activeExercise?.name && entry.sessionId !== sessionId)
+  const currentCompletionSummary = completionSummary?.sessionId === sessionId
+    ? completionSummary
+    : completedSessions.find((item) => item.sessionId === sessionId)
+      || completedSessions.find((item) => item.sessionId === completedWorkoutKeys[completionKey])
+  const isTodayCompleted = Boolean(completedWorkoutKeys[completionKey] && currentCompletionSummary && sessionId === completedWorkoutKeys[completionKey])
+  const latestCompletedSummary = completedSessions[0] || null
+  const recoveryNextSession = weeklyPlan[scheduleInfo.nextDay]
 
   return (
     <main className="app-shell">
@@ -340,6 +1744,83 @@ export default function WorkoutTrackerApp() {
         <div className="install-hint">PWA ready</div>
       </section>
 
+      <nav className="view-tabs" aria-label="App sections">
+        <button type="button" className={mainView === 'workout' ? 'active' : ''} onClick={() => setMainView('workout')}>Workout</button>
+        <button type="button" className={mainView === 'progress' ? 'active' : ''} onClick={() => setMainView('progress')}>Progress</button>
+      </nav>
+
+      {mainView === 'workout' ? (
+        <>
+      {isRecoveryState && (
+        <section className="card">
+          <div className="card-content stack">
+            <div className="section-heading">
+              <Icon name="timer" />
+              <h2>Recovery Day</h2>
+            </div>
+            <p className="muted">No programmed lift today. Next session: {scheduleInfo.nextDay} — {recoveryNextSession.title}.</p>
+            {latestCompletedSummary && (
+              <div className="summary-box">
+                <strong>Most recent session</strong>
+                <p>{latestCompletedSummary.day} on {latestCompletedSummary.date}. Top: {latestCompletedSummary.topPerformance}</p>
+              </div>
+            )}
+            <button type="button" className="button secondary full" onClick={() => {
+              setManualDaySelected(true)
+              setDay(scheduleInfo.nextDay)
+              setFocusIdx(0)
+            }}>
+              Open Next Session
+            </button>
+            <nav className="mini-day-tabs" aria-label="Choose workout day manually">
+              {Object.keys(weeklyPlan).map((currentDay) => (
+                <button key={currentDay} type="button" onClick={() => {
+                  setManualDaySelected(true)
+                  setDay(currentDay)
+                  setFocusIdx(0)
+                }}>
+                  {currentDay.slice(0, 3)}
+                </button>
+              ))}
+            </nav>
+          </div>
+        </section>
+      )}
+
+      {isTodayCompleted && (
+        <section className="card">
+          <div className="card-content stack">
+            <div className="section-heading">
+              <Icon name="check" />
+              <h2>Today's session is already completed.</h2>
+            </div>
+            {currentCompletionSummary && (
+              <div className="summary-box">
+                <strong>{currentCompletionSummary.day} summary</strong>
+                <p>{currentCompletionSummary.completedExercises.length} done, {currentCompletionSummary.skippedExercises.length} skipped. Top: {currentCompletionSummary.topPerformance}</p>
+              </div>
+            )}
+            <div className="button-row">
+              <button type="button" className="button primary grow" onClick={() => setMainView('progress')}>View Summary</button>
+              <button type="button" className="button secondary grow" onClick={startNewSessionAnyway}>Start New Session Anyway</button>
+            </div>
+            <nav className="mini-day-tabs" aria-label="Choose another workout day">
+              {Object.keys(weeklyPlan).map((currentDay) => (
+                <button key={currentDay} type="button" onClick={() => {
+                  setManualDaySelected(true)
+                  setDay(currentDay)
+                  setFocusIdx(0)
+                }}>
+                  {currentDay.slice(0, 3)}
+                </button>
+              ))}
+            </nav>
+          </div>
+        </section>
+      )}
+
+      {!isRecoveryState && !isTodayCompleted && (
+        <>
       <section className="card session-card">
         <div className="card-content stack">
           <div className="split-row">
@@ -347,19 +1828,47 @@ export default function WorkoutTrackerApp() {
               <p className="eyebrow">Session cap</p>
               <p className="metric"><Icon name="timer" /> Max 50 min</p>
             </div>
-            <span className="badge badge-strong">{formatTime(sessionSeconds)}</span>
+            <span className="badge badge-strong">{formatTime(sessionRemaining)}</span>
           </div>
 
           <div className="button-grid three">
-            <button type="button" onClick={() => setSessionRunning(true)} className="button primary"><Icon name="play" /> Start</button>
-            <button type="button" onClick={() => setSessionRunning(false)} className="button secondary"><Icon name="pause" /> Pause</button>
             <button type="button" onClick={() => {
-              setSessionSeconds(50 * 60)
-              setSessionRunning(false)
+              const timestamp = Date.now()
+              setSessionTimer((prev) => startTimerAt(prev, timestamp))
+            }} className="button primary"><Icon name="play" /> Start</button>
+            <button type="button" onClick={() => {
+              const timestamp = Date.now()
+              setSessionTimer((prev) => pauseTimerAt(prev, timestamp))
+            }} className="button secondary"><Icon name="pause" /> Pause</button>
+            <button type="button" onClick={() => {
+              setSessionTimer(createTimer(50 * 60))
             }} className="button secondary icon-only" aria-label="Reset session timer"><Icon name="reset" /></button>
           </div>
 
-          <p className="muted small">Estimated workout length: {estimatedMinutes} min. Countdown is set to your 50-minute cap.</p>
+          <button type="button" className="button primary full complete-button" onClick={requestCompleteWorkout}>
+            <Icon name="check" /> {currentCompletionSummary ? 'Update Workout Summary' : 'Complete Workout'}
+          </button>
+          {showCompleteConfirm && (
+            <div className="confirm-box">
+              <p>You still have unfinished items. Complete anyway?</p>
+              <div className="button-row">
+                <button type="button" className="button primary grow" onClick={finishWorkout}>Complete Anyway</button>
+                <button type="button" className="button secondary grow" onClick={() => setShowCompleteConfirm(false)}>Keep Training</button>
+              </div>
+            </div>
+          )}
+          {currentCompletionSummary && (
+            <div className="summary-box">
+              <strong>Workout completed</strong>
+              <p>{currentCompletionSummary.completedExercises.length} done, {currentCompletionSummary.skippedExercises.length} skipped. Top: {currentCompletionSummary.topPerformance}</p>
+            </div>
+          )}
+
+          <p className="muted small">
+            {sessionTimer.status === 'idle' && sessionLogs.length === 0
+              ? 'Start when you begin training. Your logs and timers are saved on this device.'
+              : `Estimated workout length: ${estimatedMinutes} min. Countdown is set to your 50-minute cap.`}
+          </p>
 
           <div className="stack tight">
             <div className="split-row progress-label">
@@ -382,9 +1891,76 @@ export default function WorkoutTrackerApp() {
         </div>
       </section>
 
+      <section className="card">
+        <div className="card-content stack tight">
+          <div className="split-row">
+            <div className="section-heading">
+              <Icon name="trend" />
+              <h2>Training Maxes</h2>
+            </div>
+            <button type="button" className="text-button" onClick={() => setShowTrainingMaxes((prev) => !prev)}>
+              {showTrainingMaxes ? 'Hide' : 'Edit'}
+            </button>
+          </div>
+          <div className="max-summary">
+            {session.exercises.filter((exercise) => exercise.key).map((exercise) => (
+              <div key={`${day}-${exercise.key}-${exercise.name}`}>
+                <span>{prMeta[exercise.key]?.short || formatKey(exercise.key)}</span>
+                <strong>{prs[exercise.key]} <small>{getPRUnit(exercise.key)}</small></strong>
+              </div>
+            ))}
+          </div>
+          {showTrainingMaxes && (
+            <>
+              <div className="pr-grid compact">
+                {Object.entries(prs).map(([key, value]) => (
+                  <label key={key} className="field">
+                    <span>{getPRLabel(key)}</span>
+                    <input type="number" min="0" inputMode="numeric" value={value} onChange={(event) => updatePR(key, event.target.value)} />
+                    <small>{getPRUnit(key)}</small>
+                  </label>
+                ))}
+              </div>
+              <div className="button-row">
+                <button type="button" className="button primary grow" onClick={savePRs}><Icon name="save" /> Save Maxes</button>
+                <button type="button" className="button secondary icon-only" onClick={() => setConfirmReset(true)} aria-label="Reset all saved tracker data"><Icon name="reset" /></button>
+              </div>
+              <div className="button-row">
+                <button type="button" className="button secondary grow" onClick={exportBackup}>Export Backup</button>
+                <button type="button" className="button secondary grow" onClick={() => importInputRef.current?.click()}>Import Backup</button>
+              </div>
+              <input
+                ref={importInputRef}
+                className="hidden-input"
+                type="file"
+                accept="application/json"
+                onChange={(event) => {
+                  importBackup(event.target.files?.[0])
+                  event.target.value = ''
+                }}
+              />
+              {saved && <p className="success small">Saved to this device.</p>}
+              {confirmReset && (
+                <div className="confirm-box">
+                  <p>This permanently clears saved logs, completed sessions, PRs, notes, and timers on this device.</p>
+                  <div className="button-row">
+                    <button type="button" className="button danger-button grow" onClick={resetAll}>Reset Everything</button>
+                    <button type="button" className="button secondary grow" onClick={() => setConfirmReset(false)}>Cancel</button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </section>
+
       <nav className="tabs" aria-label="Workout days">
         {Object.keys(weeklyPlan).map((currentDay) => (
-          <button key={currentDay} type="button" onClick={() => setDay(currentDay)} className={currentDay === day ? 'active' : ''}>
+          <button key={currentDay} type="button" onClick={() => {
+            setManualDaySelected(true)
+            setDay(currentDay)
+            setFocusIdx(0)
+          }} className={currentDay === day ? 'active' : ''}>
             {currentDay.slice(0, 3)}
           </button>
         ))}
@@ -398,30 +1974,81 @@ export default function WorkoutTrackerApp() {
         </div>
       </section>
 
+      <section className="card focus-card">
+        <div className="card-content stack tight">
+          <div className="split-row">
+            <div>
+              <p className="eyebrow">Current exercise</p>
+              <h2>{focusIdx + 1}. {activeExercise.name}</h2>
+            </div>
+            <div className="focus-actions">
+              <span className="badge badge-strong">{formatTime(sessionRemaining)}</span>
+              <button type="button" className="text-button" onClick={() => setFocusMode((prev) => !prev)}>
+                {focusMode ? 'Show all' : 'Focus'}
+              </button>
+            </div>
+          </div>
+          <div className="focus-meta">
+            <span>{activeExercise.sets} x {activeExercise.reps}</span>
+            <span>{activeExercise.rest} rest</span>
+            <span>{activeExerciseTarget?.label || (activeExerciseWeight ? `${activeExerciseWeight} lb target` : activeExercise.load || getActivityType(activeExercise))}</span>
+          </div>
+          {activeExerciseLastLog && (
+            <p className="muted small">Last logged: {summarizeLogEntry(activeExerciseLastLog)}</p>
+          )}
+          <div className="button-grid two">
+            <button type="button" className="button secondary" onClick={() => moveFocus(-1)}>Prev</button>
+            <button type="button" className="button secondary" onClick={() => moveFocus(1)}>Next</button>
+          </div>
+        </div>
+      </section>
+
       <section className="exercise-list">
         {session.exercises.map((exercise, idx) => {
+          if (focusMode && idx !== focusIdx) return null
           const id = `${day}-${idx}`
-          const workingWeight = getWorkingWeight(exercise)
+          const target = getExerciseTarget(exercise)
+          const workingWeight = target.load
+          const type = getActivityType(exercise)
+          const draft = getDraftForExercise(setDrafts[id], exercise, workingWeight)
           const restSeconds = restToSeconds(exercise.rest)
-          const timerValue = timers[id] ?? restSeconds
+          const timerValue = getTimerRemaining(restTimers[id] || createTimer(restSeconds), now)
+          const lastExerciseLog = sessionLog.find((entry) => entry.exercise === exercise.name && entry.sessionId !== sessionId)
 
           return (
-            <article key={id} className="card exercise-card">
+            <article key={id} ref={(node) => { exerciseRefs.current[id] = node }} className="card exercise-card">
               <div className="card-content stack">
                 <div className="split-row top-align">
                   <div>
                     <h3>{idx + 1}. {exercise.name}</h3>
                     <p className="muted">{exercise.sets} sets x {exercise.reps} | Rest {exercise.rest}</p>
+                    <span className="type-pill">{type}</span>
                   </div>
                   {completed[id] && <Icon name="check" className="done-icon" />}
                 </div>
 
-                <div className="target-box">
-                  <p><span>Target load:</span> <strong>{workingWeight ? `${workingWeight} lb` : exercise.load || 'As prescribed'}</strong></p>
-                  {exercise.percent && <p className="small muted">Based on {Math.round(exercise.percent * 100)}% of your current PR, adjusted by readiness.</p>}
-                </div>
+                {isLoadBasedType(type) ? (
+                  <div className="target-box">
+                    <p><span>Today's target:</span> <strong>{target.label}</strong></p>
+                    {target.previousResult && <p className="small muted">Last result: {target.previousResult}</p>}
+                    <p className="small muted">Reason: {target.reason}</p>
+                  </div>
+                ) : (
+                  <div className="target-box">
+                    <p><span>Today's target:</span> <strong>{target.label}</strong></p>
+                    {target.previousResult && <p className="small muted">Last result: {target.previousResult}</p>}
+                    <p className="small muted">{target.reason || (type === 'sprint' ? 'Track speed quality, mechanics, fatigue, and rest instead of load.' : 'Checklist-style completion keeps this fast.')}</p>
+                  </div>
+                )}
 
                 <p className="note">{exercise.note}</p>
+
+                {lastExerciseLog && (
+                  <div className="history-chip">
+                    <span>Last time</span>
+                    <strong>{summarizeLogEntry(lastExerciseLog)}</strong>
+                  </div>
+                )}
 
                 {restSeconds > 0 && (
                   <div className="timer-box stack tight">
@@ -430,37 +2057,128 @@ export default function WorkoutTrackerApp() {
                       <span className="timer-readout">{formatTime(timerValue)}</span>
                     </div>
                     <div className="button-grid three">
-                      <button type="button" onClick={() => startRestTimer(idx, exercise.rest)} className="button primary icon-only" aria-label={`Start ${exercise.name} rest timer`}><Icon name="play" /></button>
-                      <button type="button" onClick={() => pauseRestTimer(idx)} className="button secondary icon-only" aria-label={`Pause ${exercise.name} rest timer`}><Icon name="pause" /></button>
+                      <button type="button" onClick={() => startRestTimer(idx, exercise.rest, Date.now())} className="button primary icon-only" aria-label={`Start ${exercise.name} rest timer`}><Icon name="play" /></button>
+                      <button type="button" onClick={() => pauseRestTimer(idx, Date.now())} className="button secondary icon-only" aria-label={`Pause ${exercise.name} rest timer`}><Icon name="pause" /></button>
                       <button type="button" onClick={() => resetRestTimer(idx, exercise.rest)} className="button secondary icon-only" aria-label={`Reset ${exercise.name} rest timer`}><Icon name="reset" /></button>
                     </div>
                   </div>
                 )}
 
-                <div className="form-grid">
-                  <label className="field">
-                    <span>Reps hit?</span>
-                    <select value={feedback[id]?.repsHit || ''} onChange={(event) => updateFeedback(idx, 'repsHit', event.target.value)}>
-                      <option value="">Select</option>
-                      <option value="yes">Yes</option>
-                      <option value="no">No</option>
-                    </select>
-                  </label>
-                  <label className="field">
-                    <span>Difficulty</span>
-                    <select value={feedback[id]?.difficulty || ''} onChange={(event) => updateFeedback(idx, 'difficulty', event.target.value)}>
-                      <option value="">Select</option>
-                      <option value="easy">Easy</option>
-                      <option value="good">Good</option>
-                      <option value="hard">Too hard</option>
-                    </select>
-                  </label>
-                </div>
+                {isLoadBasedType(type) && (
+                  <>
+                    <div className="set-table" aria-label={`${exercise.name} set log`}>
+                      <div className="set-table-head">
+                        <span>Set</span>
+                        <span>Load</span>
+                        <span>Reps</span>
+                        <span>RIR</span>
+                      </div>
+                      {draft.sets.map((set, setIdx) => (
+                        <div className="set-row" key={`${id}-set-${setIdx}`}>
+                          <span>{setIdx + 1}</span>
+                          <input
+                            type="number"
+                            min="0"
+                            inputMode="decimal"
+                            value={set.weight}
+                            onChange={(event) => updateSetDraft(idx, setIdx, 'weight', event.target.value)}
+                            aria-label={`${exercise.name} set ${setIdx + 1} load`}
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            inputMode="numeric"
+                            value={set.reps}
+                            onChange={(event) => updateSetDraft(idx, setIdx, 'reps', event.target.value)}
+                            aria-label={`${exercise.name} set ${setIdx + 1} reps`}
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            max="5"
+                            inputMode="numeric"
+                            value={set.rir}
+                            onChange={(event) => updateSetDraft(idx, setIdx, 'rir', event.target.value)}
+                            aria-label={`${exercise.name} set ${setIdx + 1} reps in reserve`}
+                          />
+                        </div>
+                      ))}
+                    </div>
 
-                <label className="field">
-                  <span>Quick note</span>
-                  <input value={feedback[id]?.notes || ''} onChange={(event) => updateFeedback(idx, 'notes', event.target.value)} placeholder="e.g., hit 8s clean, knee felt good" />
-                </label>
+                    <div className="form-grid single">
+                      <label className="field">
+                        <span>Overall feel</span>
+                        <select value={draft.difficulty} onChange={(event) => updateDraftField(idx, 'difficulty', event.target.value)}>
+                          <option value="">Select</option>
+                          <option value="easy">Easy / had more</option>
+                          <option value="good">Good hypertrophy effort</option>
+                          <option value="hard">Too hard / form slipped</option>
+                        </select>
+                      </label>
+                    </div>
+
+                    <label className="field">
+                      <span>Quick note</span>
+                      <input value={draft.notes} onChange={(event) => updateDraftField(idx, 'notes', event.target.value)} placeholder="e.g., right side tilted, knee felt good" />
+                    </label>
+                  </>
+                )}
+
+                {type === 'sprint' && (
+                  <div className="sprint-grid">
+                    <label className="field">
+                      <span>Distance</span>
+                      <input value={draft.sprint.distance} onChange={(event) => updateNestedDraft(idx, 'sprint', 'distance', event.target.value)} placeholder="e.g., 40m" />
+                    </label>
+                    <label className="field">
+                      <span>Reps</span>
+                      <input type="number" min="0" inputMode="numeric" value={draft.sprint.reps} onChange={(event) => updateNestedDraft(idx, 'sprint', 'reps', event.target.value)} />
+                    </label>
+                    <label className="field">
+                      <span>Rest</span>
+                      <input value={draft.sprint.rest} onChange={(event) => updateNestedDraft(idx, 'sprint', 'rest', event.target.value)} placeholder="3-6 min" />
+                    </label>
+                    <label className="field">
+                      <span>Best rep/time</span>
+                      <input value={draft.sprint.bestRep} onChange={(event) => updateNestedDraft(idx, 'sprint', 'bestRep', event.target.value)} placeholder="optional" />
+                    </label>
+                    <label className="field">
+                      <span>Speed quality</span>
+                      <select value={draft.sprint.speedQuality} onChange={(event) => updateNestedDraft(idx, 'sprint', 'speedQuality', event.target.value)}>
+                        <option value="">Select</option>
+                        <option value="sharp">Sharp</option>
+                        <option value="good">Good</option>
+                        <option value="dropping">Speed dropped</option>
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Fatigue</span>
+                      <select value={draft.sprint.fatigue} onChange={(event) => updateNestedDraft(idx, 'sprint', 'fatigue', event.target.value)}>
+                        <option value="">Select</option>
+                        <option value="low">Low</option>
+                        <option value="moderate">Moderate</option>
+                        <option value="high">High</option>
+                      </select>
+                    </label>
+                    <label className="field wide">
+                      <span>Mechanics note</span>
+                      <input value={draft.sprint.mechanicsNote} onChange={(event) => updateNestedDraft(idx, 'sprint', 'mechanicsNote', event.target.value)} placeholder="e.g., speed drop after rep 3, tight hamstring" />
+                    </label>
+                  </div>
+                )}
+
+                {isChecklistType(type) && (
+                  <div className="checklist-log">
+                    <label className="check-field">
+                      <input type="checkbox" checked={draft.checklist.completed} onChange={(event) => updateNestedDraft(idx, 'checklist', 'completed', event.target.checked)} />
+                      <span>Completed</span>
+                    </label>
+                    <label className="field">
+                      <span>Note</span>
+                      <input value={draft.checklist.notes} onChange={(event) => updateNestedDraft(idx, 'checklist', 'notes', event.target.value)} placeholder="e.g., hips opened up, calves tight" />
+                    </label>
+                  </div>
+                )}
 
                 <button type="button" onClick={() => logExercise(idx)} className="button primary full"><Icon name="clipboard" /> Log Exercise</button>
               </div>
@@ -475,18 +2193,31 @@ export default function WorkoutTrackerApp() {
             <Icon name="clipboard" />
             <h2>Today's Logged Work</h2>
           </div>
-          {dayLogs.length === 0 ? (
+          {sessionLogs.length === 0 ? (
             <p className="muted">Nothing logged yet. Set reps/difficulty, add a note if useful, then tap Log Exercise.</p>
           ) : (
             <div className="log-list">
-              {dayLogs.map((entry) => (
+              {sessionLogs.map((entry) => (
                 <div key={entry.id} className="log-entry">
                   <div className="split-row top-align">
                     <strong>{entry.exercise}</strong>
                     <span>{entry.time}</span>
                   </div>
                   <p>{entry.target} | {entry.weight}</p>
-                  <p className="muted">Reps hit: {entry.repsHit} | Difficulty: {entry.difficulty}</p>
+                  {entry.type === 'sprint' && entry.sprint && (
+                    <p className="muted">
+                      {entry.sprint.distance || '-'} | {entry.sprint.reps || '-'} reps | rest {entry.sprint.rest || '-'} | speed {entry.sprint.speedQuality || '-'} | fatigue {entry.sprint.fatigue || '-'}
+                    </p>
+                  )}
+                  {isChecklistType(entry.type) && entry.checklist && (
+                    <p className="muted">{entry.checklist.completed ? 'Completed' : 'Not completed'}</p>
+                  )}
+                  {isLoadBasedType(entry.type) && entry.sets?.length > 0 && (
+                    <p className="muted">
+                      {entry.sets.map((set) => `S${set.set}: ${set.weight ?? '-'} x ${set.reps ?? '-'} @ ${set.rir ?? '-'} RIR`).join(' | ')}
+                    </p>
+                  )}
+                  <p className="muted">Difficulty: {entry.difficulty}</p>
                   {entry.notes && <p className="log-note">Note: {entry.notes}</p>}
                 </div>
               ))}
@@ -495,25 +2226,72 @@ export default function WorkoutTrackerApp() {
         </div>
       </section>
 
+      {currentCompletionSummary && (
+        <section className="card">
+          <div className="card-content stack">
+            <div className="section-heading">
+              <Icon name="check" />
+              <h2>Completed Session Summary</h2>
+            </div>
+            <div className="summary-grid">
+              <div>
+                <span>Completed</span>
+                <strong>{currentCompletionSummary.completedExercises.length}</strong>
+              </div>
+              <div>
+                <span>Skipped</span>
+                <strong>{currentCompletionSummary.skippedExercises.length}</strong>
+              </div>
+            </div>
+            <p className="muted">Top performance: {currentCompletionSummary.topPerformance}</p>
+            {currentCompletionSummary.skippedExercises.length > 0 && <p className="muted">Skipped: {currentCompletionSummary.skippedExercises.join(', ')}</p>}
+            {currentCompletionSummary.formFlags.length > 0 && <p className="log-note">Flags: {currentCompletionSummary.formFlags.map((flag) => `${flag.exercise} (${flag.issue})`).join(', ')}</p>}
+            {currentCompletionSummary.sprintNotes.length > 0 && currentCompletionSummary.sprintNotes.map((note) => <p className="muted" key={note}>{note}</p>)}
+            <div className="advice-list">
+              {currentCompletionSummary.coachRecommendations.length ? currentCompletionSummary.coachRecommendations.map((line) => <p key={line}>{line}</p>) : <p>No coach recommendations yet.</p>}
+            </div>
+          </div>
+        </section>
+      )}
+
       <section className="card">
         <div className="card-content stack">
           <div className="section-heading">
-            <Icon name="trend" />
-            <h2>Current PRs / Estimated Maxes</h2>
+            <Icon name="zap" />
+            <h2>Insight / Coach Notes</h2>
           </div>
-          <div className="pr-grid">
-            {Object.entries(prs).map(([key, value]) => (
-              <label key={key} className="field">
-                <span>{formatKey(key)}</span>
-                <input type="number" min="0" inputMode="numeric" value={value} onChange={(event) => updatePR(key, event.target.value)} />
-              </label>
-            ))}
-          </div>
-          <div className="button-row">
-            <button type="button" className="button primary grow" onClick={savePRs}><Icon name="save" /> Save PRs</button>
-            <button type="button" className="button secondary icon-only" onClick={resetAll} aria-label="Reset all saved tracker data"><Icon name="reset" /></button>
-          </div>
-          {saved && <p className="success small">Saved to this device.</p>}
+          {coachInsights.progression.length === 0 && coachInsights.form.length === 0 ? (
+            <p className="muted">Log a movement with reps, RIR, fatigue, or a note to get coaching feedback.</p>
+          ) : (
+            <div className="coach-grid">
+              <div>
+                <h3>Strength Progression</h3>
+                {coachInsights.progression.length ? coachInsights.progression.map((item) => (
+                  <p key={item.text}>{item.text}</p>
+                )) : <p className="muted">No load progression changes yet.</p>}
+              </div>
+              <div>
+                <h3>Form / Safety</h3>
+                {coachInsights.form.length ? coachInsights.form.map((item) => (
+                  <p key={item.text}>{item.text}</p>
+                )) : <p className="muted">No form issues detected from notes.</p>}
+              </div>
+            </div>
+          )}
+          {suggestedAdjustments.length > 0 && (
+            <div className="suggestion-list">
+              {suggestedAdjustments.map((item) => (
+                <div className="suggestion-box" key={item.key}>
+                  <strong>Suggested adjustment for next session</strong>
+                  <p>{item.text}</p>
+                  <div className="button-row">
+                    <button type="button" className="button primary grow" onClick={() => setSuggestionStatus((prev) => ({ ...prev, [item.key]: 'accepted' }))}>Accept</button>
+                    <button type="button" className="button secondary grow" onClick={() => setSuggestionStatus((prev) => ({ ...prev, [item.key]: 'dismissed' }))}>Dismiss</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 
@@ -528,34 +2306,252 @@ export default function WorkoutTrackerApp() {
               <p key={idx}>{line}</p>
             ))}
           </div>
-          <p className="muted small">Rule: if all sets hit the top of the rep range with clean form and 1-2 reps in reserve, add 5 lb for upper body or 5-10 lb for lower body next time.</p>
+          <p className="muted small">Rule: targets move only when performance, readiness, and notes support it. Pain, form flags, or high fatigue pause progression.</p>
         </div>
       </section>
-
-      <section className="card last-card">
-        <div className="card-content stack">
-          <div className="split-row">
-            <div className="section-heading">
-              <Icon name="test" />
-              <h2>Developer Checks</h2>
+        </>
+      )}
+        </>
+      ) : (
+        <section className="card">
+          <div className="card-content stack">
+            <div className="split-row">
+              <div className="section-heading">
+                <Icon name="trend" />
+                <h2>Progress</h2>
+              </div>
+              <select className="compact-select" value={trendFilter} onChange={(event) => setTrendFilter(event.target.value)}>
+                <option value="4">Last 4 exposures</option>
+                <option value="8">Last 8 exposures</option>
+                <option value="1m">1 month</option>
+                <option value="3m">3 months</option>
+                <option value="all">All time</option>
+              </select>
             </div>
-            <span className="badge subtle">{testResults.passed}/{testResults.total}</span>
-          </div>
-          <button type="button" onClick={() => setShowTests((prev) => !prev)} className="button secondary full">
-            {showTests ? 'Hide Checks' : 'Show Checks'}
-          </button>
-          {showTests && (
-            <div className="log-list">
-              {testResults.tests.map((test) => (
-                <div key={test.name} className="check-row">
-                  <span>{test.name}</span>
-                  <strong className={test.pass ? 'success' : 'danger'}>{test.pass ? 'PASS' : 'FAIL'}</strong>
+            <p className="muted small">Progress is based on exposures, not calendar weeks, so each movement is judged by the last times you actually trained it.</p>
+            <div className="summary-box">
+              <strong>Completed Sessions</strong>
+              {completedSessions.length === 0 ? (
+                <p>No completed sessions yet. Finish a workout to save a session summary here.</p>
+              ) : (
+                <p>{completedSessions.length} saved. Latest: {completedSessions[0].day} on {completedSessions[0].date}, top {completedSessions[0].topPerformance}</p>
+              )}
+            </div>
+            {trendCards.length === 0 ? (
+              <p className="muted">No logged training data yet. Log a few exercises to unlock trajectory cards.</p>
+            ) : (
+              <div className="trajectory-list">
+                {trendCards.map((card) => {
+                  const latest = card.exposures[card.exposures.length - 1]
+                  const metric = chartMetrics[card.exercise] || getDefaultChartMetric(card)
+                  const details = selectedExposure?.exercise === card.exercise
+                    ? buildExposureDetails(card, selectedExposure.point, metric)
+                    : null
+                  return (
+                    <article className="trajectory-card" key={card.exercise}>
+                      <div className="split-row top-align">
+                        <div>
+                          <button type="button" className="card-title-button" onClick={() => {
+                            setDetailExercise(card.exercise)
+                            setSelectedExposure(null)
+                          }}>
+                            <h3>{card.exercise}</h3>
+                          </button>
+                          <span className={`trend-label ${card.label.toLowerCase().replaceAll(' ', '-').replaceAll('/', '')}`}>{card.label}</span>
+                        </div>
+                        <span className="badge subtle">{card.exposures.length} exp.</span>
+                      </div>
+                      <p>{card.interpretation}</p>
+                      <div className="chart-toolbar">
+                        <span>{getChartMetricOptions(card.type).find((option) => option.value === metric)?.label}</span>
+                        <select value={metric} onChange={(event) => setChartMetrics((prev) => ({ ...prev, [card.exercise]: event.target.value }))}>
+                          {getChartMetricOptions(card.type).map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <ExposureChart
+                        card={card}
+                        metric={metric}
+                        onSelectPoint={(point) => setSelectedExposure({ exercise: card.exercise, point })}
+                      />
+                      {details && (
+                        <div className="exposure-detail">
+                          <div className="split-row top-align">
+                            <strong>{details.date} · Exposure {details.exposure}</strong>
+                            <button type="button" className="text-button" onClick={() => setSelectedExposure(null)}>Close</button>
+                          </div>
+                          <p>{details.metricLabel}: {details.metricValue}</p>
+                          {card.type === 'strength' ? (
+                            <p className="muted">Top {details.topLoad || '-'} · Volume {details.volume || '-'} · Best {details.bestSet || '-'} · Avg RIR {details.avgRir !== null ? details.avgRir.toFixed(1) : '-'}</p>
+                          ) : (
+                            <p className="muted">Reps {details.sprint?.reps || '-'} · Quality {details.sprint?.speedQuality || '-'} · Fatigue {details.sprint?.fatigue || '-'} · Best {details.sprint?.bestRep || '-'}</p>
+                          )}
+                          {details.flags.length > 0 && <p className="log-note">Flags: {details.flags.join(', ')}</p>}
+                          {details.notes && <p className="muted">Notes: {details.notes}</p>}
+                          <p>{details.interpretation}</p>
+                        </div>
+                      )}
+                      <button type="button" className="button secondary full" onClick={() => {
+                        setDetailExercise(card.exercise)
+                        setSelectedExposure(null)
+                      }}>
+                        View details
+                      </button>
+                      {card.type === 'strength' && latest?.metrics && (
+                        <div className="metric-grid">
+                          <div><span>Top load</span><strong>{latest.metrics.topWeight || '-'}</strong></div>
+                          <div><span>Volume</span><strong>{latest.metrics.volumeLoad || '-'}</strong></div>
+                          <div><span>Best set</span><strong>{latest.metrics.bestSet.weight ? `${latest.metrics.bestSet.weight} x ${latest.metrics.bestSet.reps}` : '-'}</strong></div>
+                          <div><span>Avg RIR</span><strong>{latest.metrics.avgRir !== null ? latest.metrics.avgRir.toFixed(1) : '-'}</strong></div>
+                        </div>
+                      )}
+                      {card.type === 'sprint' && latest?.sprint && (
+                        <div className="metric-grid">
+                          <div><span>Reps</span><strong>{latest.sprint.reps || '-'}</strong></div>
+                          <div><span>Quality</span><strong>{latest.sprint.speedQuality || '-'}</strong></div>
+                          <div><span>Fatigue</span><strong>{latest.sprint.fatigue || '-'}</strong></div>
+                          <div><span>Best</span><strong>{latest.sprint.bestRep || '-'}</strong></div>
+                        </div>
+                      )}
+                    </article>
+                  )
+                })}
+              </div>
+            )}
+            {detailCard && (
+              <div className="detail-overlay" role="dialog" aria-modal="true" aria-labelledby="exercise-detail-title">
+                <div className="detail-panel">
+                  <div className="split-row top-align">
+                    <div>
+                      <p className="eyebrow">Exercise detail</p>
+                      <h2 id="exercise-detail-title">{detailCard.exercise}</h2>
+                    </div>
+                    <button type="button" className="text-button" onClick={() => {
+                      setDetailExercise(null)
+                      setSelectedExposure(null)
+                    }}>
+                      Close
+                    </button>
+                  </div>
+                  <span className={`trend-label ${detailCard.label.toLowerCase().replaceAll(' ', '-').replaceAll('/', '')}`}>{detailCard.label}</span>
+                  <p className="muted">{detailCard.interpretation}</p>
+                  <div className="chart-toolbar">
+                    <span>{getChartMetricOptions(detailCard.type).find((option) => option.value === (chartMetrics[detailCard.exercise] || getDefaultChartMetric(detailCard)))?.label}</span>
+                    <select value={chartMetrics[detailCard.exercise] || getDefaultChartMetric(detailCard)} onChange={(event) => setChartMetrics((prev) => ({ ...prev, [detailCard.exercise]: event.target.value }))}>
+                      {getChartMetricOptions(detailCard.type).map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <select className="compact-select" value={trendFilter} onChange={(event) => setTrendFilter(event.target.value)}>
+                    <option value="4">Last 4 exposures</option>
+                    <option value="8">Last 8 exposures</option>
+                    <option value="1m">1 month</option>
+                    <option value="3m">3 months</option>
+                    <option value="all">All time</option>
+                  </select>
+                  <ExposureChart
+                    card={detailCard}
+                    metric={chartMetrics[detailCard.exercise] || getDefaultChartMetric(detailCard)}
+                    height={230}
+                    onSelectPoint={(point) => setSelectedExposure({ exercise: detailCard.exercise, point })}
+                  />
+                  <div className="summary-box">
+                    <strong>What this means next session</strong>
+                    <p>{nextTargets[detailCard.exercise]?.reason || detailCard.interpretation}</p>
+                  </div>
+                  {selectedExposure?.exercise === detailCard.exercise && (() => {
+                    const metric = chartMetrics[detailCard.exercise] || getDefaultChartMetric(detailCard)
+                    const details = buildExposureDetails(detailCard, selectedExposure.point, metric)
+                    if (!details) return null
+                    return (
+                      <div className="exposure-detail">
+                        <strong>{details.date} · Exposure {details.exposure}</strong>
+                        <p>{details.metricLabel}: {details.metricValue}</p>
+                        {detailCard.type === 'strength' ? (
+                          <p className="muted">Top {details.topLoad || '-'} · Volume {details.volume || '-'} · Best {details.bestSet || '-'} · Avg RIR {details.avgRir !== null ? details.avgRir.toFixed(1) : '-'}</p>
+                        ) : (
+                          <p className="muted">Reps {details.sprint?.reps || '-'} · Quality {details.sprint?.speedQuality || '-'} · Fatigue {details.sprint?.fatigue || '-'} · Best {details.sprint?.bestRep || '-'}</p>
+                        )}
+                        {details.flags.length > 0 && <p className="log-note">Flags: {details.flags.join(', ')}</p>}
+                        {details.notes && <p className="muted">Notes: {details.notes}</p>}
+                        <p>{details.interpretation}</p>
+                      </div>
+                    )
+                  })()}
+                  <div className="log-list">
+                    {detailCard.exposures.map((entry, index) => (
+                      <button
+                        type="button"
+                        className="exposure-list-button"
+                        key={`${entry.id || entry.loggedAt}-${index}`}
+                        onClick={() => {
+                          const metric = chartMetrics[detailCard.exercise] || getDefaultChartMetric(detailCard)
+                          const point = buildChartData(detailCard, metric).find((item) => item.entry === entry)
+                          if (point) setSelectedExposure({ exercise: detailCard.exercise, point })
+                        }}
+                      >
+                        <span>{entry.date || entry.loggedAt?.slice(0, 10) || `Exposure ${index + 1}`}</span>
+                        <strong>{summarizeLogEntry(entry)}</strong>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              ))}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {testResults && (
+        <section className="card last-card">
+          <div className="card-content stack">
+            <div className="split-row">
+              <div className="section-heading">
+                <Icon name="test" />
+                <h2>Developer Checks</h2>
+              </div>
+              <span className="badge subtle">{testResults.passed}/{testResults.total}</span>
             </div>
-          )}
+            <button type="button" onClick={() => setShowTests((prev) => !prev)} className="button secondary full">
+              {showTests ? 'Hide Checks' : 'Show Checks'}
+            </button>
+            {showTests && (
+              <div className="log-list">
+                {testResults.tests.map((test) => (
+                  <div key={test.name} className="check-row">
+                    <span>{test.name}</span>
+                    <strong className={test.pass ? 'success' : 'danger'}>{test.pass ? 'PASS' : 'FAIL'}</strong>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {restTimerOverlay && (
+        <div className="timer-complete-overlay" role="dialog" aria-modal="true" aria-labelledby="timer-complete-title">
+          <div className="timer-complete-card">
+            <p className="eyebrow">Rest complete</p>
+            <h2 id="timer-complete-title">Time's Up</h2>
+            <p className="timer-complete-subtitle">Next set is ready</p>
+            <p className="timer-complete-exercise">{restTimerOverlay.exerciseName}</p>
+            <div className="timer-complete-actions">
+              <button type="button" className="button primary full" onClick={startNextSetFromOverlay}>
+                Start Next Set
+              </button>
+              <button type="button" className="button secondary full" onClick={addThirtySecondsToRestTimer}>
+                Add 30 sec
+              </button>
+              <button type="button" className="button ghost full" onClick={dismissRestTimerOverlay}>
+                Dismiss
+              </button>
+            </div>
+          </div>
         </div>
-      </section>
+      )}
     </main>
   )
 }
