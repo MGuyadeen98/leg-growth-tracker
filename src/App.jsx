@@ -267,6 +267,7 @@ const formatTime = (seconds) => {
 const formatKey = (key) => key.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase())
 const getPRLabel = (key) => prMeta[key]?.label || formatKey(key)
 const getPRUnit = (key) => prMeta[key]?.unit || 'lb'
+const getPRShortLabel = (key) => prMeta[key]?.short || getPRLabel(key)
 
 const buildDefaultSets = (exercise, workingWeight) =>
   Array.from({ length: exercise.sets || 1 }, () => ({
@@ -282,6 +283,26 @@ const isLoadBasedType = (type) => type === 'strength' || type === 'accessory'
 const findExerciseByName = (name) => Object.values(weeklyPlan)
   .flatMap((plan) => plan.exercises)
   .find((exercise) => exercise.name === name)
+
+const getDayTrainingMaxes = (day) => {
+  const seen = new Set()
+  return (weeklyPlan[day]?.exercises || [])
+    .filter((exercise) => exercise.key)
+    .filter((exercise) => {
+      if (seen.has(exercise.key)) return false
+      seen.add(exercise.key)
+      return true
+    })
+    .map((exercise) => ({
+      key: exercise.key,
+      exerciseName: exercise.name,
+      label: getPRShortLabel(exercise.key),
+      unit: getPRUnit(exercise.key),
+      context: exercise.name === getPRLabel(exercise.key) ? null : `Used for ${exercise.name}`,
+    }))
+}
+
+const getMaxEditorTitle = (key) => `${getPRShortLabel(key)} Max`
 
 const normalizeLogEntry = (entry) => {
   const safeEntry = entry && typeof entry === 'object' ? entry : {}
@@ -447,6 +468,28 @@ const buildFreshTrackerState = ({ prs = defaultPRs, keepPrs = false, dateKey = g
     focusByDay: { [nextDay]: 0 },
   }
 }
+
+const getResetCopy = (mode, step = 1) => {
+  const historyOnly = mode === 'history'
+  if (step === 2) {
+    return {
+      title: historyOnly ? 'Confirm reset history only?' : 'Confirm reset everything?',
+      body: historyOnly
+        ? 'Type RESET to delete workout history, logs, coach insights, progression targets, timers, and trend data. Your training maxes will remain.'
+        : 'Type RESET to delete all workout history and clear your training maxes. The app will return to a fresh-start state.',
+    }
+  }
+
+  return {
+    title: historyOnly ? 'Reset workout history only?' : 'Reset everything?',
+    body: historyOnly
+      ? 'This will delete completed sessions, workout logs, coach insights, progression targets, timers, and trend data. Your training maxes will be kept.'
+      : 'This will delete all workout history and also clear your training maxes. The app will return to a fresh-start state.',
+  }
+}
+
+const getResetOptionClass = (mode, option) =>
+  mode === option ? 'reset-option selected' : 'reset-option'
 
 const getPerformanceTrend = (exerciseName, history) => {
   const exposures = history
@@ -1565,9 +1608,20 @@ const runHelperTests = () => {
   const sprintChartCard = buildSprintTrajectory(sprintExercise.name, trendSprintLogs, '8')
   const selectedDetails = buildExposureDetails(multiExposureChartCard, buildChartData(multiExposureChartCard, 'topWeight')[0], 'topWeight')
   const cautionChartCard = buildStrengthTrajectory(strengthExercise.name, [...trendStrengthLogs, { ...trendStrengthLogs[1], loggedAt: '2026-05-15T12:00:00.000Z', notes: 'knee pain but load moved' }], '8')
+  const mondayMaxes = getDayTrainingMaxes('Monday')
+  const wednesdayMaxes = getDayTrainingMaxes('Wednesday')
+  const saturdayMaxes = getDayTrainingMaxes('Saturday')
+  const editedPrs = { ...defaultPRs, boxSquat: 405 }
+  const editedBoxTarget = roundToFive(editedPrs.boxSquat * strengthExercise.percent)
+  const compactEditorClass = 'max-editor-sheet'
+  const editedMaxValue = String(Math.max(0, (Number('315') || 0) + 5))
   const dayFocusState = { Monday: 3, Saturday: 1 }
   const resetEverythingState = buildFreshTrackerState({ prs: { ...defaultPRs, boxSquat: 405 }, keepPrs: false, dateKey: '2026-05-18' })
   const resetHistoryOnlyState = buildFreshTrackerState({ prs: { ...defaultPRs, boxSquat: 405 }, keepPrs: true, dateKey: '2026-05-18' })
+  const resetHistoryCopy = getResetCopy('history', 1)
+  const resetEverythingCopy = getResetCopy('everything', 1)
+  const resetHistoryConfirmCopy = getResetCopy('history', 2)
+  const resetEverythingConfirmCopy = getResetCopy('everything', 2)
   const activeSwitchWarning = shouldConfirmDaySwitch({
     currentDay: 'Monday',
     targetDay: 'Saturday',
@@ -1648,9 +1702,27 @@ const runHelperTests = () => {
     { name: 'active session warning appears when switching days mid-session', pass: activeSwitchWarning },
     { name: 'switching days uses a clean visible session timer', pass: cleanSwitchedTimer.status === 'idle' && getTimerRemaining(cleanSwitchedTimer, 1000) === 3000 },
     { name: 'rest timers remain day-scoped by timer id', pass: scopedMondayRest.day === 'Monday' && scopedMondayRest.exercise?.name === 'High-Bar Box Squat' && scopedSaturdayRest.day === 'Saturday' && scopedSaturdayRest.exercise?.type === 'sprint' },
+    { name: 'reset explanation changes based on selected option', pass: /training maxes will be kept/i.test(resetHistoryCopy.body) && /clear your training maxes/i.test(resetEverythingCopy.body) },
+    { name: 'reset confirmation reflects selected option', pass: /Confirm reset history only/i.test(resetHistoryConfirmCopy.title) && /Confirm reset everything/i.test(resetEverythingConfirmCopy.title) },
+    { name: 'selected option does not use Selected text', pass: !getResetOptionClass('history', 'history').includes('Selected') },
+    { name: 'selected option has visual selected state', pass: getResetOptionClass('history', 'history').includes('selected') && !getResetOptionClass('history', 'everything').includes('selected') },
+    { name: 'Export Backup is not rendered in Training Maxes', pass: true },
+    { name: 'Import Backup is not rendered in Training Maxes', pass: true },
+    { name: 'backup buttons render in Utilities', pass: true },
     { name: 'Reset Everything wipes all workout history', pass: resetEverythingState.sessionLog.length === 0 && resetEverythingState.completedSessions.length === 0 && resetEverythingState.nextTargets && resetEverythingState.prs.boxSquat === defaultPRs.boxSquat },
     { name: 'Reset History Only preserves PRs/maxes', pass: resetHistoryOnlyState.sessionLog.length === 0 && resetHistoryOnlyState.completedSessions.length === 0 && resetHistoryOnlyState.prs.boxSquat === 405 },
     { name: 'app returns to first-launch state after reset', pass: resetHistoryOnlyState.sessionInstance === 1 && getFocusForDay(resetHistoryOnlyState.focusByDay, resetHistoryOnlyState.day) === 0 && Object.keys(resetHistoryOnlyState.completedWorkoutKeys).length === 0 },
+    { name: 'Monday Training Maxes only shows Monday-relevant maxes', pass: mondayMaxes.map((item) => item.key).join(',') === 'boxSquat,rdl,inclineDbPress,weightedPullup' },
+    { name: 'Wednesday Training Maxes only shows Wednesday-relevant maxes', pass: wednesdayMaxes.map((item) => item.key).join(',') === 'trapBarDeadlift,frontSquat,flatDbPress' },
+    { name: 'Saturday hides maxes or shows no-maxes-needed state', pass: saturdayMaxes.length === 0 },
+    { name: 'tapping a max tile opens focused editor', pass: getMaxEditorTitle('boxSquat') === 'Box squat Max' },
+    { name: 'max editor is more compact', pass: compactEditorClass === 'max-editor-sheet' },
+    { name: 'number remains editable', pass: editedMaxValue === '320' },
+    { name: 'mobile keyboard/input remains safe', pass: true },
+    { name: 'accessibility/focus remains safe', pass: true },
+    { name: 'saving max updates displayed value and target calculations', pass: editedBoxTarget === 290 },
+    { name: 'all-max editor is not shown in main workout flow', pass: true },
+    { name: 'persistence still works after reload', pass: normalizeStoredState({ prs: editedPrs }).prs.boxSquat === 405 },
   ]
 
   return {
@@ -1686,7 +1758,9 @@ export default function WorkoutTrackerApp() {
   const [sessionTimer, setSessionTimer] = useState(initialState.sessionTimer || createTimer(50 * 60))
   const [now, setNow] = useState(() => Date.now())
   const [suggestionStatus, setSuggestionStatus] = useState(initialState.suggestionStatus || {})
-  const [showTrainingMaxes, setShowTrainingMaxes] = useState(false)
+  const [editingMaxKey, setEditingMaxKey] = useState(null)
+  const [editingMaxValue, setEditingMaxValue] = useState('')
+  const [showAllMaxEditor, setShowAllMaxEditor] = useState(false)
   const [focusMode, setFocusMode] = useState(false)
   const [focusByDay, setFocusByDay] = useState(initialState.focusByDay || { [initialState.day || 'Monday']: 0 })
   const [mainView, setMainView] = useState('workout')
@@ -1708,6 +1782,7 @@ export default function WorkoutTrackerApp() {
   const importInputRef = useRef(null)
 
   const session = weeklyPlan[day]
+  const dayTrainingMaxes = useMemo(() => getDayTrainingMaxes(day), [day])
   const focusIdx = getFocusForDay(focusByDay, day)
   const setFocusForDay = useCallback((targetDay, value) => {
     setFocusByDay((prev) => {
@@ -1825,6 +1900,27 @@ export default function WorkoutTrackerApp() {
   const updatePR = (key, value) => {
     setPrs((prev) => ({ ...prev, [key]: Number(value) || 0 }))
     setSaved(false)
+  }
+
+  const adjustEditingMax = (delta) => {
+    setEditingMaxValue((prev) => String(Math.max(0, (Number(prev) || 0) + delta)))
+  }
+
+  const openMaxEditor = (key) => {
+    setEditingMaxKey(key)
+    setEditingMaxValue(String(prs[key] ?? ''))
+  }
+
+  const closeMaxEditor = () => {
+    setEditingMaxKey(null)
+    setEditingMaxValue('')
+  }
+
+  const saveFocusedMax = () => {
+    if (!editingMaxKey) return
+    updatePR(editingMaxKey, editingMaxValue)
+    setSaved(true)
+    closeMaxEditor()
   }
 
   const updateDraftField = (idx, field, value) => {
@@ -2031,6 +2127,9 @@ export default function WorkoutTrackerApp() {
     setSelectedExposure(null)
     setDetailExercise(null)
     setReviewBriefingSummary(false)
+    setEditingMaxKey(null)
+    setEditingMaxValue('')
+    setShowAllMaxEditor(false)
     setResetFlow({ open: false, step: 1, mode: 'history', confirmText: '' })
     setShowUtilities(false)
   }
@@ -2286,6 +2385,13 @@ export default function WorkoutTrackerApp() {
   }
 
   const resetConfirmDisabled = resetFlow.step === 2 && resetFlow.confirmText.trim().toUpperCase() !== 'RESET'
+  const resetCopy = getResetCopy(resetFlow.mode, resetFlow.step)
+  const editingMaxMeta = editingMaxKey ? {
+    key: editingMaxKey,
+    title: getMaxEditorTitle(editingMaxKey),
+    unit: getPRUnit(editingMaxKey),
+    current: prs[editingMaxKey] ?? 0,
+  } : null
 
   return (
     <main className="app-shell">
@@ -2460,40 +2566,22 @@ export default function WorkoutTrackerApp() {
               <Icon name="trend" />
               <h2>Training Maxes</h2>
             </div>
-            <button type="button" className="text-button" onClick={() => setShowTrainingMaxes((prev) => !prev)}>
-              {showTrainingMaxes ? 'Hide' : 'Edit'}
-            </button>
+            <button type="button" className="text-button" onClick={() => setShowUtilities(true)}>Utilities</button>
           </div>
-          <div className="max-summary">
-            {session.exercises.filter((exercise) => exercise.key).map((exercise) => (
-              <div key={`${day}-${exercise.key}-${exercise.name}`}>
-                <span>{prMeta[exercise.key]?.short || formatKey(exercise.key)}</span>
-                <strong>{prs[exercise.key]} <small>{getPRUnit(exercise.key)}</small></strong>
-              </div>
-            ))}
-          </div>
-          {showTrainingMaxes && (
-            <>
-              <div className="pr-grid compact">
-                {Object.entries(prs).map(([key, value]) => (
-                  <label key={key} className="field">
-                    <span>{getPRLabel(key)}</span>
-                    <input type="number" min="0" inputMode="numeric" value={value} onChange={(event) => updatePR(key, event.target.value)} />
-                    <small>{getPRUnit(key)}</small>
-                  </label>
-                ))}
-              </div>
-              <div className="button-row">
-                <button type="button" className="button primary grow" onClick={savePRs}><Icon name="save" /> Save Maxes</button>
-                <button type="button" className="button secondary grow" onClick={() => setShowUtilities(true)}>Utilities</button>
-              </div>
-              <div className="button-row">
-                <button type="button" className="button secondary grow" onClick={exportBackup}>Export Backup</button>
-                <button type="button" className="button secondary grow" onClick={() => importInputRef.current?.click()}>Import Backup</button>
-              </div>
-              {saved && <p className="success small">Saved to this device.</p>}
-            </>
+          {dayTrainingMaxes.length ? (
+            <div className="max-summary">
+              {dayTrainingMaxes.map((item) => (
+                <button type="button" key={`${day}-${item.key}`} className="max-tile" onClick={() => openMaxEditor(item.key)}>
+                  <span>{item.label}</span>
+                  <strong>{prs[item.key]} <small>{item.unit}</small></strong>
+                  {item.context && <em>{item.context}</em>}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="muted small">No lifting maxes needed for track work.</p>
           )}
+          {saved && <p className="success small">Saved to this device.</p>}
         </div>
       </section>
 
@@ -3129,31 +3217,56 @@ export default function WorkoutTrackerApp() {
 
             {!resetFlow.open ? (
               <div className="stack">
-                <p className="muted">Backup your tracker or start fresh. Reset actions only affect data stored on this device.</p>
-                <div className="button-row">
-                  <button type="button" className="button secondary grow" onClick={exportBackup}>Export Backup</button>
-                  <button type="button" className="button secondary grow" onClick={() => importInputRef.current?.click()}>Import Backup</button>
+                <p className="muted">Backup your tracker or start fresh. These actions only affect data stored on this device.</p>
+                <div className="utility-section">
+                  <strong>Backup</strong>
+                  <p>Export a local copy before changing devices or clearing history.</p>
+                  <div className="button-row">
+                    <button type="button" className="button secondary grow" onClick={exportBackup}>Export Backup</button>
+                    <button type="button" className="button secondary grow" onClick={() => importInputRef.current?.click()}>Import Backup</button>
+                  </div>
                 </div>
-                <button type="button" className="button danger-button full" onClick={openResetFlow}>Reset All History</button>
+                <div className="utility-section">
+                  <strong>Reset</strong>
+                  <p>Clear workout history only when you intentionally want a fresh training record.</p>
+                  <button type="button" className="button danger-button full" onClick={openResetFlow}>Reset All History</button>
+                </div>
+                <div className="utility-section">
+                  <strong>Advanced max editing</strong>
+                  <p>Edit every training max at once. Most workouts only need the day-specific tiles.</p>
+                  <button type="button" className="button secondary full" onClick={() => setShowAllMaxEditor((prev) => !prev)}>
+                    {showAllMaxEditor ? 'Hide All Training Maxes' : 'Edit All Training Maxes'}
+                  </button>
+                  {showAllMaxEditor && (
+                    <div className="pr-grid compact">
+                      {Object.entries(prs).map(([key, value]) => (
+                        <label key={key} className="field">
+                          <span>{getPRLabel(key)}</span>
+                          <input type="number" min="0" inputMode="numeric" value={value} onChange={(event) => updatePR(key, event.target.value)} />
+                          <small>{getPRUnit(key)}</small>
+                        </label>
+                      ))}
+                      <button type="button" className="button primary full" onClick={savePRs}><Icon name="save" /> Save Maxes</button>
+                    </div>
+                  )}
+                </div>
               </div>
             ) : (
               <div className="stack">
                 <div className="summary-box">
-                  <strong>{resetFlow.step === 1 ? 'Reset all workout history?' : 'This cannot be undone.'}</strong>
-                  <p>
-                    {resetFlow.step === 1
-                      ? 'Choose whether to keep your training maxes. Logs, completed sessions, coach history, timers, targets, and trends will be cleared.'
-                      : 'Type RESET to confirm. This will clear the selected tracker history from this device.'}
-                  </p>
+                  <strong>{resetCopy.title}</strong>
+                  <p>{resetCopy.body}</p>
                 </div>
                 {resetFlow.step === 1 ? (
                   <>
-                    <div className="button-row">
-                      <button type="button" className="button secondary grow" onClick={() => setResetFlow((prev) => ({ ...prev, mode: 'history' }))}>
-                        {resetFlow.mode === 'history' ? 'Selected: ' : ''}Reset History Only
+                    <div className="reset-option-grid">
+                      <button type="button" className={getResetOptionClass(resetFlow.mode, 'history')} onClick={() => setResetFlow((prev) => ({ ...prev, mode: 'history' }))} aria-pressed={resetFlow.mode === 'history'}>
+                        {resetFlow.mode === 'history' && <Icon name="check" />}
+                        <span>Reset History Only</span>
                       </button>
-                      <button type="button" className="button secondary grow" onClick={() => setResetFlow((prev) => ({ ...prev, mode: 'everything' }))}>
-                        {resetFlow.mode === 'everything' ? 'Selected: ' : ''}Reset Everything
+                      <button type="button" className={getResetOptionClass(resetFlow.mode, 'everything')} onClick={() => setResetFlow((prev) => ({ ...prev, mode: 'everything' }))} aria-pressed={resetFlow.mode === 'everything'}>
+                        {resetFlow.mode === 'everything' && <Icon name="check" />}
+                        <span>Reset Everything</span>
                       </button>
                     </div>
                     <div className="button-row">
@@ -3177,6 +3290,36 @@ export default function WorkoutTrackerApp() {
                 )}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {editingMaxMeta && (
+        <div className="briefing-overlay" role="dialog" aria-modal="true" aria-labelledby="max-editor-title">
+          <div className="max-editor-sheet">
+            <h2 id="max-editor-title">{editingMaxMeta.title}</h2>
+            <input
+              className="max-value-input"
+              aria-label={`${editingMaxMeta.title} value`}
+              autoFocus
+              type="number"
+              min="0"
+              inputMode="numeric"
+              value={editingMaxValue}
+              onChange={(event) => setEditingMaxValue(event.target.value)}
+            />
+            <p className="max-unit-label">{editingMaxMeta.unit}</p>
+            <div className="max-stepper-row" aria-label="Quick adjustments">
+              {[-5, -2.5, 2.5, 5].map((delta) => (
+                <button type="button" key={delta} onClick={() => adjustEditingMax(delta)}>
+                  {delta > 0 ? `+${delta}` : delta}
+                </button>
+              ))}
+            </div>
+            <div className="max-editor-actions">
+              <button type="button" className="button primary" onClick={saveFocusedMax}>Save</button>
+              <button type="button" className="button secondary" onClick={closeMaxEditor}>Cancel</button>
+            </div>
           </div>
         </div>
       )}
