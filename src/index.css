@@ -126,6 +126,32 @@ h3 {
   height: 1.75rem;
 }
 
+.settings-button {
+  width: 2.35rem;
+  height: 2.35rem;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  color: #a8bdb8;
+  background: rgba(13, 25, 22, 0.62);
+  transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
+}
+
+.settings-button:hover,
+.settings-button:focus-visible {
+  border-color: rgba(94, 234, 212, 0.5);
+  color: #99f6e4;
+  background: rgba(20, 184, 166, 0.1);
+}
+
+.settings-button .icon {
+  width: 1.05rem;
+  height: 1.05rem;
+  color: currentColor;
+}
+
 .card {
   border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 8px;
@@ -594,12 +620,6 @@ h3 {
   display: none;
 }
 
-.utility-footer {
-  display: flex;
-  justify-content: center;
-  padding: 1rem 0 0.25rem;
-}
-
 .summary-box,
 .summary-grid > div,
 .trajectory-card,
@@ -1042,6 +1062,127 @@ h3 {
   backdrop-filter: blur(18px);
 }
 
+.tour-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 49;
+  display: grid;
+  place-items: center;
+  padding: max(1rem, env(safe-area-inset-top)) 1rem max(1rem, env(safe-area-inset-bottom));
+  background:
+    radial-gradient(circle at 50% 40%, rgba(94, 234, 212, 0.14), transparent 18rem),
+    rgba(2, 6, 5, 0.66);
+  backdrop-filter: blur(18px);
+  animation: overlay-fade 180ms ease both;
+}
+
+.tour-spotlight-active {
+  isolation: isolate;
+}
+
+.tour-spotlight-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 46;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 28%, rgba(94, 234, 212, 0.08), transparent 16rem),
+    rgba(2, 6, 5, 0.42);
+  backdrop-filter: blur(3px);
+  animation: overlay-fade 180ms ease both;
+}
+
+.tour-highlight {
+  position: relative;
+  z-index: 47;
+  border-color: rgba(94, 234, 212, 0.64) !important;
+  box-shadow:
+    0 0 0 1px rgba(94, 234, 212, 0.18),
+    0 0 34px rgba(94, 234, 212, 0.18),
+    0 24px 72px rgba(0, 0, 0, 0.42);
+  animation: tour-lift 220ms ease both;
+}
+
+.tour-anchor-card {
+  position: fixed;
+  z-index: 49;
+  width: min(100%, 20rem);
+  bottom: max(0.9rem, env(safe-area-inset-bottom));
+  left: 0.9rem;
+  border: 1px solid rgba(94, 234, 212, 0.34);
+  border-radius: 8px;
+  padding: 0.54rem 0.6rem 0.46rem;
+  background: rgba(9, 19, 17, 0.98);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.42);
+  animation: coach-panel-in 180ms ease both;
+}
+
+.tour-anchor-card::before {
+  content: "";
+  position: absolute;
+  top: -0.42rem;
+  left: 1.25rem;
+  width: 0.72rem;
+  height: 0.72rem;
+  border-left: 1px solid rgba(94, 234, 212, 0.34);
+  border-top: 1px solid rgba(94, 234, 212, 0.34);
+  background: rgba(9, 19, 17, 0.98);
+  transform: rotate(45deg);
+}
+
+.tour-anchor-card.above::before {
+  top: auto;
+  bottom: -0.42rem;
+  border: 0;
+  border-right: 1px solid rgba(94, 234, 212, 0.34);
+  border-bottom: 1px solid rgba(94, 234, 212, 0.34);
+}
+
+.tour-anchor-card.bottom {
+  top: auto !important;
+  bottom: max(0.9rem, env(safe-area-inset-bottom));
+}
+
+.tour-anchor-card.bottom::before {
+  display: none;
+}
+
+.tour-anchor-card h2 {
+  margin-top: 0.05rem;
+  font-size: 0.94rem;
+}
+
+.tour-anchor-card p {
+  margin: 0.2rem 0 0.26rem;
+  color: #cbd5e1;
+  font-size: 0.74rem;
+  line-height: 1.28;
+}
+
+.tour-anchor-card .tour-detail {
+  color: #9fb5b0;
+  font-size: 0.72rem;
+}
+
+.tour-anchor-card .button-row {
+  margin-top: 0.34rem;
+  gap: 0.38rem;
+}
+
+.tour-anchor-card .button {
+  min-height: 1.95rem;
+  padding-block: 0.38rem;
+}
+
+.tour-anchor-card.start-button {
+  width: min(100%, 18rem);
+}
+
+.tour-anchor-card.training-maxes,
+.tour-anchor-card.focus-area {
+  width: min(100%, 19rem);
+}
+
 .briefing-card {
   width: min(100%, 30rem);
   max-height: min(88svh, 48rem);
@@ -1051,6 +1192,92 @@ h3 {
   padding: 1rem;
   background: rgba(13, 25, 22, 0.96);
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.48);
+}
+
+.tour-card {
+  width: min(100%, 24rem);
+  border: 1px solid rgba(94, 234, 212, 0.34);
+  border-radius: 8px;
+  padding: 1rem;
+  background: rgba(13, 25, 22, 0.97);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.48);
+  animation: timer-card-in 180ms ease both;
+}
+
+.tour-card.welcome {
+  width: min(100%, 23rem);
+}
+
+.tour-card h2 {
+  margin-top: 0.2rem;
+  font-size: 1.25rem;
+}
+
+.tour-card p {
+  margin: 0.55rem 0 0.85rem;
+  color: #cbd5e1;
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.tour-count {
+  color: #7dd3c7;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.tour-progress {
+  display: flex;
+  gap: 0.25rem;
+  margin: 0.3rem 0 0;
+}
+
+.tour-progress span {
+  height: 0.24rem;
+  flex: 1;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.2);
+}
+
+.tour-progress span.active {
+  background: #5eead4;
+  box-shadow: 0 0 18px rgba(94, 234, 212, 0.26);
+}
+
+.tour-skip {
+  display: block;
+  margin: 0.22rem auto 0;
+}
+
+.coach-nudge {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: start;
+  justify-content: space-between;
+  gap: 0.55rem;
+  border: 1px solid rgba(94, 234, 212, 0.26);
+  border-radius: 8px;
+  padding: 0.55rem 0.6rem;
+  background: rgba(20, 184, 166, 0.06);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.12);
+  animation: slide-in 180ms ease both;
+}
+
+.coach-nudge strong {
+  display: block;
+  color: #ecfeff;
+  font-size: 0.74rem;
+}
+
+.coach-nudge p {
+  margin-top: 0.18rem;
+  color: #a8bdb8;
+  font-size: 0.72rem;
+  line-height: 1.3;
+}
+
+.coach-nudge .text-button {
+  flex: 0 0 auto;
 }
 
 .max-editor-sheet {
@@ -1487,6 +1714,26 @@ h3 {
   }
 }
 
+@keyframes coach-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.45rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes tour-lift {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-1px);
+  }
+}
+
 @keyframes focus-fade-in {
   from {
     opacity: 0;
@@ -1516,10 +1763,21 @@ h3 {
 @media (prefers-reduced-motion: reduce) {
   .timer-complete-overlay,
   .timer-complete-card,
+  .tour-overlay,
+  .tour-card,
+  .tour-spotlight-scrim,
+  .tour-anchor-card,
+  .tour-highlight,
+  .coach-nudge,
   .focus-fade-stage .exercise-card,
   .hero-panel,
   .button.pulse-start {
     animation: none;
+  }
+
+  .tour-highlight,
+  .tour-anchor-card {
+    transform: none;
   }
 
   .button.pulse-start {
