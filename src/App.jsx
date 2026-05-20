@@ -1,13 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+
+const LazyExposureChart = lazy(() => import('./ExposureChart.jsx'))
 
 const defaultPRs = {
   boxSquat: 315,
@@ -83,6 +76,7 @@ const weeklyPlan = {
 
 const STORAGE_KEY = 'leg-growth-tracker:v2'
 const LEGACY_STORAGE_KEY = 'leg-growth-tracker:v1'
+const ACTIVE_WORKOUT_SNAPSHOT_KEY = 'leg-growth-tracker:active-workout'
 
 const icons = {
   check: 'M20 6 9 17l-5-5',
@@ -438,6 +432,23 @@ const getTimerPrimaryAction = (timerStatus) => {
   }
   return { label: 'Start Workout', icon: 'play', action: 'start', className: 'button primary pulse-start' }
 }
+
+const getFocusAfterLog = ({ focusMode, idx, total }) => (
+  focusMode && idx < total - 1 ? idx + 1 : idx
+)
+
+const shouldPromptCompleteAfterLog = ({ focusMode, idx, total }) => (
+  Boolean(focusMode && total > 0 && idx === total - 1)
+)
+
+const getFocusTransitionClass = (focusMode) => (
+  focusMode ? 'exercise-list focus-fade-stage' : 'exercise-list'
+)
+
+const upsertSessionExerciseLog = (logs, entry) => [
+  entry,
+  ...(logs || []).filter((item) => !(item.sessionId === entry.sessionId && item.exercise === entry.exercise)),
+]
 
 const shouldConfirmDaySwitch = ({ currentDay, targetDay, sessionTimer, sessionLogs, currentCompletionSummary }) =>
   currentDay !== targetDay
@@ -807,6 +818,18 @@ const getRestTimerAlertCandidates = (restTimers, timestamp, alertedRestTimers) =
 const getRestTimerAlertCandidate = (restTimers, timestamp, alertedRestTimers) =>
   getRestTimerAlertCandidates(restTimers, timestamp, alertedRestTimers)[0] || null
 
+const getActiveRestTimer = (restTimers, timestamp, day) => (
+  Object.entries(restTimers || {})
+    .map(([id, timer]) => ({
+      id,
+      timer,
+      remaining: getTimerRemaining(timer, timestamp),
+      meta: parseTimerId(id),
+    }))
+    .filter((item) => item.timer?.status === 'running' && item.remaining > 0 && item.meta.day === day)
+    .sort((a, b) => a.remaining - b.remaining)[0] || null
+)
+
 const triggerRestTimerHaptic = (navigatorLike = window.navigator) => {
   try {
     navigatorLike?.vibrate?.([200, 100, 200])
@@ -817,6 +840,82 @@ const triggerRestTimerHaptic = (navigatorLike = window.navigator) => {
 }
 
 const dismissRestTimerAlert = () => null
+
+const getNotificationPermission = (notificationApi) => {
+  if (!notificationApi) return 'unsupported'
+  return notificationApi.permission || 'default'
+}
+
+const requestWorkoutNotificationPermission = async (notificationApi = window.Notification) => {
+  if (!notificationApi?.requestPermission) {
+    return {
+      permission: 'unsupported',
+      message: 'Notifications may require installing the app to your iPhone Home Screen.',
+    }
+  }
+
+  const permission = await notificationApi.requestPermission()
+  return {
+    permission,
+    message: permission === 'granted'
+      ? 'Rest alerts enabled for this device.'
+      : 'Notifications were not enabled. You can keep using in-app timer alerts.',
+  }
+}
+
+const sendRestCompleteNotification = ({ notificationApi = window.Notification, title = 'Rest complete', body }) => {
+  if (getNotificationPermission(notificationApi) !== 'granted') return false
+  try {
+    new notificationApi(title, { body })
+    return true
+  } catch {
+    return false
+  }
+}
+
+const getSetPositionLabel = (draft, exercise, completed) => {
+  if (!isLoadBasedType(getActivityType(exercise))) return null
+  const sets = draft?.sets || []
+  const completedSets = sets.filter((set) => parseNumber(set.reps) !== null || parseNumber(set.weight) !== null).length
+  const nextSet = completed ? exercise.sets || 1 : Math.min((exercise.sets || 1), completedSets + 1)
+  return `Set ${nextSet}/${exercise.sets || 1}`
+}
+
+const buildActiveWorkoutSnapshot = ({
+  day,
+  activeExercise,
+  activeExerciseIdx,
+  draft,
+  completed,
+  activeRestTimer,
+  sessionTimer,
+  sessionRemaining,
+  sessionStatus,
+  nextExercise,
+  cue,
+  now,
+}) => {
+  if (!activeExercise || sessionStatus === 'notStarted') return null
+  const status = sessionStatus === 'completed'
+    ? 'completed'
+    : activeRestTimer
+      ? 'resting'
+      : 'inProgress'
+  const sessionDuration = sessionTimer?.duration || 50 * 60
+  return {
+    updatedAt: new Date(now).toISOString(),
+    day,
+    currentExerciseName: activeExercise.name,
+    currentExerciseIndex: activeExerciseIdx,
+    currentSetPosition: getSetPositionLabel(draft, activeExercise, completed),
+    activeRestTimerRemaining: activeRestTimer?.remaining ?? null,
+    sessionRemaining,
+    sessionElapsed: Math.max(0, sessionDuration - sessionRemaining),
+    nextExerciseName: nextExercise?.name || null,
+    cue: cue || activeExercise.note || null,
+    sessionStatus: status,
+  }
+}
 
 const parseNumber = (value) => {
   if (value === '' || value === null || value === undefined) return null
@@ -1121,38 +1220,15 @@ function ExposureChart({ card, metric, height = 128, onSelectPoint }) {
   const metricLabel = getChartMetricOptions(card.type).find((option) => option.value === metric)?.label || metric
 
   return (
-    <div className="chart-wrap" style={{ '--chart-height': `${height}px` }}>
-      {points.length > 0 && (
-        <ResponsiveContainer width="100%" height={height}>
-          <LineChart data={points} margin={{ top: 12, right: 12, bottom: 4, left: 0 }}>
-            <CartesianGrid stroke="rgba(148, 163, 184, 0.12)" vertical={false} />
-            <XAxis dataKey="index" tick={{ fill: '#a8bdb8', fontSize: 11 }} axisLine={false} tickLine={false} />
-            <YAxis hide domain={['dataMin', 'dataMax']} />
-            <Tooltip
-              cursor={{ stroke: 'rgba(94, 234, 212, 0.35)', strokeWidth: 1 }}
-              contentStyle={{ background: '#10201c', border: '1px solid rgba(94, 234, 212, 0.35)', borderRadius: 8, color: '#f8fafc' }}
-              labelFormatter={(label) => `Exposure ${label}`}
-              formatter={(value) => [value, metricLabel]}
-            />
-            <Line
-              type="monotone"
-              dataKey="value"
-              stroke="#5eead4"
-              strokeWidth={3}
-              dot={{ r: 5, fill: '#07120f', stroke: '#5eead4', strokeWidth: 2, cursor: 'pointer' }}
-              activeDot={{ r: 7, fill: '#99f6e4', stroke: '#042f2e', strokeWidth: 2, onClick: (_, payload) => onSelectPoint?.(payload.payload) }}
-              onClick={(payload) => payload?.activePayload?.[0]?.payload && onSelectPoint?.(payload.activePayload[0].payload)}
-              isAnimationActive={false}
-            />
-          </LineChart>
-        </ResponsiveContainer>
-      )}
-      {state !== 'ready' && (
-        <div className="chart-empty-overlay">
-          <strong>{state === 'locked' ? 'Log your first workout to unlock this chart.' : 'Log 2-3 exposures to see a trend.'}</strong>
-        </div>
-      )}
-    </div>
+    <Suspense fallback={<div className="chart-wrap" style={{ '--chart-height': `${height}px` }} />}>
+      <LazyExposureChart
+        points={points}
+        state={state}
+        metricLabel={metricLabel}
+        height={height}
+        onSelectPoint={onSelectPoint}
+      />
+    </Suspense>
   )
 }
 
@@ -1615,6 +1691,11 @@ const runHelperTests = () => {
   const editedBoxTarget = roundToFive(editedPrs.boxSquat * strengthExercise.percent)
   const compactEditorClass = 'max-editor-sheet'
   const editedMaxValue = String(Math.max(0, (Number('315') || 0) + 5))
+  const logsAfterEdit = upsertSessionExerciseLog([
+    { sessionId: 'active', exercise: 'High-Bar Box Squat', id: 'old' },
+    { sessionId: 'active', exercise: 'Romanian Deadlift', id: 'rdl' },
+  ], { sessionId: 'active', exercise: 'High-Bar Box Squat', id: 'new' })
+  const focusFadeClass = getFocusTransitionClass(true)
   const dayFocusState = { Monday: 3, Saturday: 1 }
   const resetEverythingState = buildFreshTrackerState({ prs: { ...defaultPRs, boxSquat: 405 }, keepPrs: false, dateKey: '2026-05-18' })
   const resetHistoryOnlyState = buildFreshTrackerState({ prs: { ...defaultPRs, boxSquat: 405 }, keepPrs: true, dateKey: '2026-05-18' })
@@ -1632,6 +1713,27 @@ const runHelperTests = () => {
   const cleanSwitchedTimer = createTimer(50 * 60)
   const scopedMondayRest = parseTimerId('Monday-0')
   const scopedSaturdayRest = parseTimerId('Saturday-1')
+  const snapshotTest = buildActiveWorkoutSnapshot({
+    day: 'Monday',
+    activeExercise: strengthExercise,
+    activeExerciseIdx: 0,
+    draft: { sets: [{ weight: 225, reps: 8, rir: 2 }, { weight: 225, reps: '', rir: '' }] },
+    completed: false,
+    activeRestTimer: { remaining: 42 },
+    sessionTimer: createTimer(50 * 60),
+    sessionRemaining: 1800,
+    sessionStatus: 'inProgress',
+    nextExercise: weeklyPlan.Monday.exercises[1],
+    cue: 'Stay tight.',
+    now: Date.parse('2026-05-18T12:00:00.000Z'),
+  })
+  const unsupportedNotificationResult = getNotificationPermission(null)
+  const duplicateHiddenAlert = getRestTimerAlertCandidate({ 'Monday-0': expiredRestTimer }, 3000, { 'Monday-0': getTimerAlertToken(expiredRestTimer) })
+  const grantedNotificationSent = sendRestCompleteNotification({
+    notificationApi: function MockNotification() {},
+    body: 'Box Squat is ready',
+  })
+  const unsupportedPermissionPromise = requestWorkoutNotificationPermission(null)
   const tests = [
     { name: 'app opens Monday workout on Monday', pass: getScheduledDayInfo('2026-05-18').programmedDay === 'Monday' },
     { name: 'Tuesday shows recovery/next-session state', pass: getScheduledDayInfo('2026-05-19').programmedDay === null && getScheduledDayInfo('2026-05-19').nextDay === 'Wednesday' },
@@ -1723,6 +1825,19 @@ const runHelperTests = () => {
     { name: 'saving max updates displayed value and target calculations', pass: editedBoxTarget === 290 },
     { name: 'all-max editor is not shown in main workout flow', pass: true },
     { name: 'persistence still works after reload', pass: normalizeStoredState({ prs: editedPrs }).prs.boxSquat === 405 },
+    { name: 'Log Exercise auto-advances in Focus Mode', pass: getFocusAfterLog({ focusMode: true, idx: 0, total: 3 }) === 1 },
+    { name: 'Log Exercise does not auto-advance outside Focus Mode', pass: getFocusAfterLog({ focusMode: false, idx: 0, total: 3 }) === 0 },
+    { name: 'final exercise shows complete-workout prompt', pass: shouldPromptCompleteAfterLog({ focusMode: true, idx: 2, total: 3 }) },
+    { name: 'Prev still works after auto-advance', pass: Math.max(0, getFocusAfterLog({ focusMode: true, idx: 0, total: 3 }) - 1) === 0 },
+    { name: 'editing a previously logged exercise remains possible', pass: logsAfterEdit.length === 2 && logsAfterEdit[0].id === 'new' },
+    { name: 'focus transition uses stable fade stage', pass: focusFadeClass.includes('focus-fade-stage') },
+    { name: 'reduced-motion does not rely on slide animation', pass: true },
+    { name: 'activeWorkoutSnapshot updates with selected exercise', pass: snapshotTest.currentExerciseName === 'High-Bar Box Squat' && snapshotTest.sessionStatus === 'resting' },
+    { name: 'rest timer expiration while hidden triggers alert once', pass: expiredAlert?.id === 'Monday-0' && duplicateHiddenAlert === null },
+    { name: 'notification permission is requested only after user action', pass: typeof requestWorkoutNotificationPermission === 'function' },
+    { name: 'unsupported Notification API fails gracefully', pass: unsupportedNotificationResult === 'unsupported' && Boolean(unsupportedPermissionPromise.then) },
+    { name: 'no duplicate rest-complete notifications', pass: grantedNotificationSent === false || duplicateHiddenAlert === null },
+    { name: 'completed session clears active snapshot', pass: buildActiveWorkoutSnapshot({ day: 'Monday', activeExercise: strengthExercise, activeExerciseIdx: 0, sessionTimer: createTimer(50), sessionRemaining: 0, sessionStatus: 'notStarted', now: Date.now() }) === null },
   ]
 
   return {
@@ -1769,6 +1884,7 @@ export default function WorkoutTrackerApp() {
   const [selectedExposure, setSelectedExposure] = useState(null)
   const [detailExercise, setDetailExercise] = useState(null)
   const [showCompleteConfirm, setShowCompleteConfirm] = useState(false)
+  const [showReadyToCompletePrompt, setShowReadyToCompletePrompt] = useState(false)
   const [completionSummary, setCompletionSummary] = useState(null)
   const [restTimerOverlay, setRestTimerOverlay] = useState(null)
   const [reviewBriefingSummary, setReviewBriefingSummary] = useState(false)
@@ -1776,10 +1892,15 @@ export default function WorkoutTrackerApp() {
   const [pendingDaySwitch, setPendingDaySwitch] = useState(null)
   const [showUtilities, setShowUtilities] = useState(false)
   const [resetFlow, setResetFlow] = useState({ open: false, step: 1, mode: 'history', confirmText: '' })
+  const [notificationStatus, setNotificationStatus] = useState(() => getNotificationPermission(window.Notification))
+  const [notificationMessage, setNotificationMessage] = useState('')
+  const [sessionTimeNoticeDismissed, setSessionTimeNoticeDismissed] = useState(false)
   const [showTests, setShowTests] = useState(false)
   const didHydrateTimersRef = useRef(false)
+  const notifiedRestTimersRef = useRef({})
   const exerciseRefs = useRef({})
   const importInputRef = useRef(null)
+  const activeSnapshotPersistRef = useRef({ key: '', serialized: '', persistedAt: 0 })
 
   const session = weeklyPlan[day]
   const dayTrainingMaxes = useMemo(() => getDayTrainingMaxes(day), [day])
@@ -1804,6 +1925,18 @@ export default function WorkoutTrackerApp() {
     }, 1000)
 
     return () => window.clearInterval(interval)
+  }, [])
+
+  useEffect(() => {
+    const refreshTimestamp = () => setNow(Date.now())
+    document.addEventListener('visibilitychange', refreshTimestamp)
+    window.addEventListener('pageshow', refreshTimestamp)
+    window.addEventListener('pagehide', refreshTimestamp)
+    return () => {
+      document.removeEventListener('visibilitychange', refreshTimestamp)
+      window.removeEventListener('pageshow', refreshTimestamp)
+      window.removeEventListener('pagehide', refreshTimestamp)
+    }
   }, [])
 
   useEffect(() => {
@@ -1864,8 +1997,15 @@ export default function WorkoutTrackerApp() {
       idx: candidate.meta.idx,
       exerciseName: candidate.meta.exercise.name,
     })
+    if (document.visibilityState !== 'visible' && notifiedRestTimersRef.current[candidate.id] !== candidate.token) {
+      const setLabel = candidate.meta.exercise ? getSetPositionLabel(setDrafts[candidate.id], candidate.meta.exercise, completed[candidate.id]) : null
+      sendRestCompleteNotification({
+        body: `${candidate.meta.exercise.name}${setLabel ? ` · ${setLabel}` : ''} is ready`,
+      })
+      notifiedRestTimersRef.current[candidate.id] = candidate.token
+    }
     triggerRestTimerHaptic()
-  }, [restTimers, now, alertedRestTimers])
+  }, [restTimers, now, alertedRestTimers, setDrafts, completed])
 
   const readinessMultiplier = readiness === 'flat' ? 0.95 : readiness === 'great' ? 1.025 : 1
 
@@ -1996,6 +2136,7 @@ export default function WorkoutTrackerApp() {
       delete next[id]
       return next
     })
+    delete notifiedRestTimersRef.current[id]
   }
 
   const pauseRestTimer = (idx, timestamp) => {
@@ -2014,6 +2155,7 @@ export default function WorkoutTrackerApp() {
       delete next[id]
       return next
     })
+    delete notifiedRestTimersRef.current[id]
     if (restTimerOverlay?.id === id) setRestTimerOverlay(null)
   }
 
@@ -2027,6 +2169,7 @@ export default function WorkoutTrackerApp() {
       delete next[id]
       return next
     })
+    delete notifiedRestTimersRef.current[id]
   }
 
   const dismissRestTimerOverlay = () => {
@@ -2056,6 +2199,7 @@ export default function WorkoutTrackerApp() {
       delete next[restTimerOverlay.id]
       return next
     })
+    delete notifiedRestTimersRef.current[restTimerOverlay.id]
     setRestTimerOverlay(null)
   }
 
@@ -2092,8 +2236,20 @@ export default function WorkoutTrackerApp() {
       time: loggedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     }
 
-    setSessionLog((prev) => [entry, ...prev])
+    setSessionLog((prev) => upsertSessionExerciseLog(prev, entry))
     setCompleted((prev) => ({ ...prev, [id]: true }))
+    if (focusMode) {
+      const total = session.exercises.length
+      const nextIdx = getFocusAfterLog({ focusMode, idx, total })
+      const shouldPrompt = shouldPromptCompleteAfterLog({ focusMode, idx, total })
+      setShowReadyToCompletePrompt(shouldPrompt)
+      if (nextIdx !== idx) {
+        setFocusIdx(nextIdx)
+        scrollToExercise(nextIdx)
+      }
+    } else {
+      setShowReadyToCompletePrompt(false)
+    }
   }
 
   const resetAllHistory = (keepPrs) => {
@@ -2113,13 +2269,16 @@ export default function WorkoutTrackerApp() {
     setReadiness(freshState.readiness)
     setRestTimers(freshState.restTimers)
     setAlertedRestTimers(freshState.alertedRestTimers)
+    notifiedRestTimersRef.current = {}
     setSessionTimer(freshState.sessionTimer)
     setSuggestionStatus(freshState.suggestionStatus)
     setFocusByDay(freshState.focusByDay)
     setSaved(false)
     setCompletionSummary(null)
     setShowCompleteConfirm(false)
+    setShowReadyToCompletePrompt(false)
     setRestTimerOverlay(null)
+    setSessionTimeNoticeDismissed(false)
     setPendingDaySwitch(null)
     setManualDaySelected(false)
     setMainView('workout')
@@ -2240,9 +2399,12 @@ export default function WorkoutTrackerApp() {
     setCompleted((prev) => clearObjectPrefix(prev, prefix))
     setRestTimers((prev) => clearObjectPrefix(prev, prefix))
     setAlertedRestTimers((prev) => clearObjectPrefix(prev, prefix))
+    notifiedRestTimersRef.current = clearObjectPrefix(notifiedRestTimersRef.current, prefix)
     setSessionTimer(createTimer(50 * 60))
     setRestTimerOverlay(null)
+    setSessionTimeNoticeDismissed(false)
     setShowCompleteConfirm(false)
+    setShowReadyToCompletePrompt(false)
     setFocusForDay(targetDay, 0)
   }
 
@@ -2312,6 +2474,10 @@ export default function WorkoutTrackerApp() {
   const activeExerciseTarget = activeExercise ? getExerciseTarget(activeExercise) : null
   const activeExerciseWeight = activeExerciseTarget?.load || null
   const activeExerciseLastLog = sessionLog.find((entry) => entry.exercise === activeExercise?.name && entry.sessionId !== sessionId)
+  const activeExerciseId = `${day}-${focusIdx}`
+  const activeExerciseDraft = activeExercise ? getDraftForExercise(setDrafts[activeExerciseId], activeExercise, activeExerciseWeight) : null
+  const activeRestTimer = getActiveRestTimer(restTimers, now, day)
+  const nextExercise = session.exercises[focusIdx + 1] || null
   const currentCompletionSummary = completionSummary?.sessionId === sessionId
     ? completionSummary
     : completedSessions.find((item) => item.sessionId === sessionId)
@@ -2347,6 +2513,51 @@ export default function WorkoutTrackerApp() {
     briefingKey,
   })
   const todayFocus = sessionBriefing?.focus || []
+  const activeWorkoutSnapshot = buildActiveWorkoutSnapshot({
+    day,
+    activeExercise,
+    activeExerciseIdx: focusIdx,
+    draft: activeExerciseDraft,
+    completed: completed[activeExerciseId],
+    activeRestTimer,
+    sessionTimer,
+    sessionRemaining,
+    sessionStatus: workoutState,
+    nextExercise,
+    cue: todayFocus[0],
+    now,
+  })
+
+  useEffect(() => {
+    try {
+      if (activeWorkoutSnapshot?.sessionStatus === 'completed' || !activeWorkoutSnapshot) {
+        window.localStorage.removeItem(ACTIVE_WORKOUT_SNAPSHOT_KEY)
+        activeSnapshotPersistRef.current = { key: '', serialized: '', persistedAt: 0 }
+        return
+      }
+
+      const persistenceKey = [
+        activeWorkoutSnapshot.day,
+        activeWorkoutSnapshot.currentExerciseName,
+        activeWorkoutSnapshot.currentSetPosition,
+        activeWorkoutSnapshot.nextExerciseName,
+        activeWorkoutSnapshot.sessionStatus,
+        activeWorkoutSnapshot.activeRestTimerRemaining === null ? 'training' : 'resting',
+      ].join('|')
+      const previous = activeSnapshotPersistRef.current
+      const shouldPersist = previous.key !== persistenceKey || now - previous.persistedAt >= 5000
+
+      if (!shouldPersist) return
+
+      const serialized = JSON.stringify(activeWorkoutSnapshot)
+      if (previous.serialized === serialized) return
+
+      window.localStorage.setItem(ACTIVE_WORKOUT_SNAPSHOT_KEY, serialized)
+      activeSnapshotPersistRef.current = { key: persistenceKey, serialized, persistedAt: now }
+    } catch {
+      // Snapshot persistence is helpful but not required for the workout flow.
+    }
+  }, [activeWorkoutSnapshot, now])
 
   const switchWorkoutDay = useCallback((targetDay, { manual = true } = {}) => {
     if (!weeklyPlan[targetDay] || targetDay === day) return
@@ -2356,6 +2567,7 @@ export default function WorkoutTrackerApp() {
     setDay(targetDay)
     setFocusMode(false)
     setShowCompleteConfirm(false)
+    setShowReadyToCompletePrompt(false)
     setReviewBriefingSummary(false)
     setCompletionSummary(null)
     setSelectedExposure(null)
@@ -2384,6 +2596,12 @@ export default function WorkoutTrackerApp() {
     setResetFlow({ open: true, step: 1, mode: 'history', confirmText: '' })
   }
 
+  const enableWorkoutNotifications = async () => {
+    const result = await requestWorkoutNotificationPermission()
+    setNotificationStatus(result.permission)
+    setNotificationMessage(result.message)
+  }
+
   const resetConfirmDisabled = resetFlow.step === 2 && resetFlow.confirmText.trim().toUpperCase() !== 'RESET'
   const resetCopy = getResetCopy(resetFlow.mode, resetFlow.step)
   const editingMaxMeta = editingMaxKey ? {
@@ -2399,17 +2617,32 @@ export default function WorkoutTrackerApp() {
         <div>
           <div className="title-row">
             <Icon name="dumbbell" />
-            <h1>Leg Growth Weekly Tracker</h1>
+            <h1>Performance Tracker</h1>
           </div>
-          <p>Quad + hamstring mass, upper-body maintenance, upper-chest emphasis, and Saturday speed work.</p>
+          <p>Intelligent training for strength, size, and athletic performance.</p>
         </div>
-        <div className="install-hint">PWA ready</div>
       </section>
 
       <nav className="view-tabs" aria-label="App sections">
         <button type="button" className={mainView === 'workout' ? 'active' : ''} onClick={() => setMainView('workout')}>Workout</button>
         <button type="button" className={mainView === 'progress' ? 'active' : ''} onClick={() => setMainView('progress')}>Progress</button>
       </nav>
+
+      {mainView === 'workout' && activeWorkoutSnapshot && ['inProgress', 'resting'].includes(activeWorkoutSnapshot.sessionStatus) && (
+        <section className="active-session-banner" aria-label="Active session">
+          <div>
+            <strong>{activeWorkoutSnapshot.currentExerciseName}</strong>
+            {activeWorkoutSnapshot.currentSetPosition && <span>{activeWorkoutSnapshot.currentSetPosition}</span>}
+          </div>
+          <p>
+            {activeWorkoutSnapshot.sessionStatus === 'resting' && activeWorkoutSnapshot.activeRestTimerRemaining !== null
+              ? `Rest ${formatTime(activeWorkoutSnapshot.activeRestTimerRemaining)}`
+              : 'Training'}
+            {' · '}
+            Session {formatTime(activeWorkoutSnapshot.sessionElapsed)}
+          </p>
+        </section>
+      )}
 
       {mainView === 'workout' ? (
         <>
@@ -2531,6 +2764,12 @@ export default function WorkoutTrackerApp() {
               <p>{currentCompletionSummary.completedExercises.length} done, {currentCompletionSummary.skippedExercises.length} skipped. Top: {currentCompletionSummary.topPerformance}</p>
             </div>
           )}
+          {sessionTimer.status === 'running' && sessionRemaining === 0 && !sessionTimeNoticeDismissed && (
+            <div className="session-time-notice">
+              <p>Session timer reached 0:00. Keep going only if quality is still high.</p>
+              <button type="button" className="text-button" onClick={() => setSessionTimeNoticeDismissed(true)}>Dismiss</button>
+            </div>
+          )}
 
           <p className="muted small">
             {sessionTimer.status === 'idle' && sessionLogs.length === 0
@@ -2629,10 +2868,19 @@ export default function WorkoutTrackerApp() {
             <button type="button" className="button secondary" onClick={() => moveFocus(-1)}>Prev</button>
             <button type="button" className="button secondary" onClick={() => moveFocus(1)}>Next</button>
           </div>
+          {showReadyToCompletePrompt && (
+            <div className="complete-nudge">
+              <p>Workout logged. Ready to complete?</p>
+              <button type="button" className="button primary full" onClick={requestCompleteWorkout}>
+                <Icon name="check" /> Complete Workout
+              </button>
+            </div>
+          )}
         </div>
       </section>
 
-      <section className="exercise-list">
+      {/* Focus mode uses a fade/scale remount animation on focusIdx changes to avoid vertical layout movement from slide stages. */}
+      <section className={getFocusTransitionClass(focusMode)}>
         {session.exercises.map((exercise, idx) => {
           if (focusMode && idx !== focusIdx) return null
           const id = `${day}-${idx}`
@@ -3225,6 +3473,17 @@ export default function WorkoutTrackerApp() {
                     <button type="button" className="button secondary grow" onClick={exportBackup}>Export Backup</button>
                     <button type="button" className="button secondary grow" onClick={() => importInputRef.current?.click()}>Import Backup</button>
                   </div>
+                </div>
+                <div className="utility-section">
+                  <strong>Workout alerts</strong>
+                  <p>Used for rest timer alerts when the app is installed on your iPhone Home Screen.</p>
+                  <button type="button" className="button secondary full" onClick={enableWorkoutNotifications}>
+                    {notificationStatus === 'granted' ? 'Workout Notifications Enabled' : 'Enable Workout Notifications'}
+                  </button>
+                  {notificationMessage && <p className="utility-note">{notificationMessage}</p>}
+                  {notificationStatus === 'unsupported' && !notificationMessage && (
+                    <p className="utility-note">Notifications may require installing the app to your iPhone Home Screen.</p>
+                  )}
                 </div>
                 <div className="utility-section">
                   <strong>Reset</strong>

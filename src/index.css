@@ -49,8 +49,8 @@ p {
 
 h1 {
   color: #ffffff;
-  font-size: clamp(1.6rem, 8vw, 2.35rem);
-  line-height: 1;
+  font-size: clamp(1.55rem, 7vw, 2.2rem);
+  line-height: 1.05;
   letter-spacing: 0;
 }
 
@@ -83,12 +83,12 @@ h3 {
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.5rem 0 1rem;
+  padding: 0.45rem 0 0.95rem;
   animation: slide-in 360ms ease both;
 }
 
 .hero-panel p {
-  margin-top: 0.45rem;
+  margin-top: 0.38rem;
   color: #b7c9c5;
   font-size: 0.9rem;
   line-height: 1.45;
@@ -393,6 +393,56 @@ h3 {
   background: #5eead4;
 }
 
+.active-session-banner {
+  position: sticky;
+  top: 0;
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.8rem;
+  border: 1px solid rgba(94, 234, 212, 0.26);
+  border-radius: 8px;
+  padding: 0.55rem 0.7rem;
+  background: rgba(7, 18, 15, 0.94);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.22);
+}
+
+.active-session-banner div {
+  min-width: 0;
+}
+
+.active-session-banner strong,
+.active-session-banner span,
+.active-session-banner p {
+  font-size: 0.78rem;
+  line-height: 1.2;
+}
+
+.active-session-banner strong {
+  display: block;
+  overflow: hidden;
+  color: #ffffff;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.active-session-banner span {
+  display: block;
+  margin-top: 0.14rem;
+  color: #99f6e4;
+  font-weight: 800;
+}
+
+.active-session-banner p {
+  flex: 0 0 auto;
+  color: #cbd5e1;
+  font-weight: 900;
+}
+
 .mini-day-tabs {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -562,6 +612,23 @@ h3 {
 .summary-box,
 .trajectory-card {
   padding: 0.85rem;
+}
+
+.session-time-notice {
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  border-radius: 8px;
+  padding: 0.7rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.session-time-notice p {
+  color: #fde68a;
+  font-size: 0.82rem;
+  line-height: 1.35;
 }
 
 .summary-box strong {
@@ -794,6 +861,26 @@ h3 {
 
 .exercise-card {
   scroll-margin-top: 12.5rem;
+}
+
+.focus-fade-stage .exercise-card {
+  animation: focus-fade-in 180ms ease-out both;
+  transform-origin: center;
+  will-change: opacity, transform;
+}
+
+.complete-nudge {
+  border: 1px solid rgba(94, 234, 212, 0.25);
+  border-radius: 8px;
+  padding: 0.75rem;
+  background: rgba(20, 184, 166, 0.1);
+}
+
+.complete-nudge p {
+  margin-bottom: 0.55rem;
+  color: #ccfbf1;
+  font-size: 0.88rem;
+  font-weight: 900;
 }
 
 .focus-meta {
@@ -1098,6 +1185,12 @@ h3 {
   line-height: 1.4;
 }
 
+.utility-section .utility-note {
+  margin: 0.55rem 0 0;
+  color: #99f6e4;
+  font-size: 0.76rem;
+}
+
 .timer-complete-card {
   width: min(100%, 24rem);
   border: 1px solid rgba(94, 234, 212, 0.4);
@@ -1394,6 +1487,17 @@ h3 {
   }
 }
 
+@keyframes focus-fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 @keyframes start-pulse {
   0% {
     box-shadow: 0 0 0 0 rgba(94, 234, 212, 0.34);
@@ -1412,6 +1516,7 @@ h3 {
 @media (prefers-reduced-motion: reduce) {
   .timer-complete-overlay,
   .timer-complete-card,
+  .focus-fade-stage .exercise-card,
   .hero-panel,
   .button.pulse-start {
     animation: none;

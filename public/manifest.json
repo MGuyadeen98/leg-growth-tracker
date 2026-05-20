@@ -1,6 +1,6 @@
 {
-  "name": "Leg Growth Weekly Tracker",
-  "short_name": "Leg Tracker",
+  "name": "Performance Tracker",
+  "short_name": "Performance",
   "description": "Track weekly leg workouts, PRs, readiness, progression, notes, logs, and rest timers.",
   "start_url": "/",
   "scope": "/",
