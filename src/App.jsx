@@ -1,6 +1,28 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 const LazyExposureChart = lazy(() => import('./ExposureChart.jsx'))
+
+class ChartErrorBoundary extends Component {
+  constructor(props) {
+    super(props)
+    this.state = { hasError: false }
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true }
+  }
+
+  componentDidUpdate(prevProps) {
+    if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
+      this.setState({ hasError: false })
+    }
+  }
+
+  render() {
+    if (this.state.hasError) return this.props.fallback
+    return this.props.children
+  }
+}
 
 const defaultPRs = {
   boxSquat: 315,
@@ -81,29 +103,37 @@ const TOUR_VERSION = 1
 
 const spotlightTourSteps = [
   {
-    target: 'session-cap',
-    eyebrow: 'Pace',
-    title: 'Start with intent',
-    body: 'Tap Start when training begins. The timer keeps pace, and readiness helps shape today’s targets.',
+    target: 'start-button',
+    eyebrow: 'Begin',
+    title: 'Start clean.',
+    body: 'When it’s time to work, hit Start.',
   },
   {
-    target: 'training-maxes',
-    eyebrow: 'Targets',
-    title: 'Set the starting point',
-    body: 'Training maxes anchor today’s loads. Tap a tile when a max changes; progression still adapts from your logged work.',
+    target: 'session-timer',
+    eyebrow: 'Clock',
+    title: 'Pace handled.',
+    body: 'We’ll keep the clock so you don’t have to.',
+  },
+  {
+    target: 'readiness-control',
+    eyebrow: 'Readiness',
+    title: 'Meet the day.',
+    body: 'Feeling good? Push a little harder.',
   },
   {
     target: 'focus-area',
     eyebrow: 'Flow',
-    title: 'Stay locked in',
-    body: 'Focus Mode keeps one movement in front of you. Log the exercise, then move forward; you can still go back to review or edit.',
+    title: 'Stay locked in.',
+    body: 'Focus Mode keeps only what’s next in front of you.',
   },
+]
+
+const recoverySpotlightTourSteps = [
   {
-    target: 'start-button',
-    eyebrow: 'Begin',
-    title: 'Ready to train?',
-    body: 'Start the session when you’re ready. Small cues will appear as you log, rest, and move through the workout.',
-    waitsForStart: true,
+    target: 'recovery-next',
+    eyebrow: 'Recovery',
+    title: 'Nothing forced today.',
+    body: 'Open the next session when you’re ready.',
   },
 ]
 
@@ -171,10 +201,10 @@ const getTourCardLayout = (targetRect, viewportWidth = window.innerWidth, viewpo
   if (!targetRect) return { mode: 'bottom', placement: 'bottom', style: {} }
 
   const margin = 14
-  const cardWidth = Math.min(320, Math.max(260, viewportWidth - margin * 2))
-  const estimatedCardHeight = 190
-  const belowTop = targetRect.bottom + 12
-  const aboveTop = targetRect.top - estimatedCardHeight - 12
+  const cardWidth = Math.min(280, Math.max(230, viewportWidth - margin * 2))
+  const estimatedCardHeight = 176
+  const belowTop = targetRect.bottom + 10
+  const aboveTop = targetRect.top - estimatedCardHeight - 10
   const fitsBelow = belowTop + estimatedCardHeight <= viewportHeight - margin
   const fitsAbove = aboveTop >= margin
   const left = Math.min(
@@ -629,8 +659,8 @@ const getResetCopy = (mode, step = 1) => {
     return {
       title: historyOnly ? 'Confirm reset history only?' : 'Confirm reset everything?',
       body: historyOnly
-        ? 'Type RESET to delete workout history, logs, coach insights, progression targets, timers, and trend data. Your training maxes will remain.'
-        : 'Type RESET to delete all workout history and clear your training maxes. The app will return to a fresh-start state.',
+        ? 'This will delete workout history, logs, coach insights, progression targets, timers, and trend data. Your training maxes will remain.'
+        : 'This will delete all workout history and clear your training maxes. The app will return to a fresh-start state.',
     }
   }
 
@@ -1361,17 +1391,24 @@ function ExposureChart({ card, metric, height = 128, onSelectPoint }) {
   const points = buildChartData(card, metric)
   const state = getChartState(card, metric)
   const metricLabel = getChartMetricOptions(card.type).find((option) => option.value === metric)?.label || metric
+  const fallback = (
+    <div className="chart-wrap chart-fallback" style={{ '--chart-height': `${height}px` }}>
+      <p>Chart could not load. Try refreshing.</p>
+    </div>
+  )
 
   return (
-    <Suspense fallback={<div className="chart-wrap" style={{ '--chart-height': `${height}px` }} />}>
-      <LazyExposureChart
-        points={points}
-        state={state}
-        metricLabel={metricLabel}
-        height={height}
-        onSelectPoint={onSelectPoint}
-      />
-    </Suspense>
+    <ChartErrorBoundary resetKey={`${card.exercise}-${metric}`} fallback={fallback}>
+      <Suspense fallback={<div className="chart-wrap" style={{ '--chart-height': `${height}px` }} />}>
+        <LazyExposureChart
+          points={points}
+          state={state}
+          metricLabel={metricLabel}
+          height={height}
+          onSelectPoint={onSelectPoint}
+        />
+      </Suspense>
+    </ChartErrorBoundary>
   )
 }
 
@@ -1401,7 +1438,9 @@ function FirstUsePrompt({ onStart, onSkip }) {
   )
 }
 
-function TourCoachCard({ step, index, total, layout, onBack, onNext, onSkip, onStartWorkout }) {
+function TourCoachCard({ step, index, total, layout, onBack, onNext, onSkip }) {
+  const isLastStep = index >= total - 1
+
   return (
     <div
       className={`tour-anchor-card ${step.target} ${layout?.mode || 'bottom'} ${layout?.placement || 'bottom'}`}
@@ -1420,15 +1459,23 @@ function TourCoachCard({ step, index, total, layout, onBack, onNext, onSkip, onS
         {step.detail && <p className="tour-detail">{step.detail}</p>}
       </div>
       <TourProgress current={index + 1} total={total} />
-      <div className="button-row">
-        <button type="button" className="button secondary grow" onClick={onBack} disabled={index === 0}>Back</button>
-        {step.waitsForStart ? (
-          <button type="button" className="button primary grow" onClick={onStartWorkout}>Start Workout</button>
-        ) : (
-          <button type="button" className="button primary grow" onClick={onNext}>Next</button>
+      <div className="tour-footer">
+        <div className="tour-action-row">
+          {index > 0 ? (
+            <button type="button" className="tour-footer-button secondary" onClick={onBack}>Back</button>
+          ) : (
+            <span aria-hidden="true" />
+          )}
+          {isLastStep ? (
+            <button type="button" className="tour-footer-button primary" onClick={onSkip}>Exit tour</button>
+          ) : (
+            <button type="button" className="tour-footer-button primary" onClick={onNext}>Next</button>
+          )}
+        </div>
+        {!isLastStep && (
+          <button type="button" className="tour-footer-link" onClick={onSkip}>Skip</button>
         )}
       </div>
-      {!step.waitsForStart && <button type="button" className="text-button tour-skip" onClick={onSkip}>Skip</button>}
     </div>
   )
 }
@@ -1953,16 +2000,19 @@ const runHelperTests = () => {
   const completedTourState = markTourCompleted(startedTourState, '2026-05-18T12:00:00.000Z')
   const hintedTourState = {
     ...completedTourState,
-    contextualHintsSeen: { 'set-logging': '2026-05-18T12:01:00.000Z' },
+    contextualHintsSeen: { 'load-entry': '2026-05-18T12:01:00.000Z' },
   }
   const visibleTourLayout = getTourCardLayout({ top: 160, bottom: 260, left: 24, width: 330, height: 100 }, 390, 844)
   const aboveTourLayout = getTourCardLayout({ top: 700, bottom: 780, left: 24, width: 330, height: 80 }, 390, 844)
   const bottomTourLayout = getTourCardLayout({ top: 330, bottom: 520, left: 24, width: 330, height: 190 }, 390, 640)
-  const sessionCapStep = spotlightTourSteps.find((step) => step.target === 'session-cap')
-  const loggingHintText = 'Reps, load, effort, and feel shape the next target.'
+  const startStep = spotlightTourSteps.find((step) => step.target === 'start-button')
+  const timerStep = spotlightTourSteps.find((step) => step.target === 'session-timer')
+  const readinessStep = spotlightTourSteps.find((step) => step.target === 'readiness-control')
+  const focusStep = spotlightTourSteps.find((step) => step.target === 'focus-area')
+  const recoveryStep = recoverySpotlightTourSteps.find((step) => step.target === 'recovery-next')
+  const loggingHintText = 'Load and reps tell me what actually moved today.'
   const completeHintText = 'That saves the session, updates coaching, and feeds Progress.'
   const progressHintText = 'Progress is built from completed exposures. It shows whether you’re improving productively over time.'
-  const finalTourStep = spotlightTourSteps.find((step) => step.target === 'start-button')
   const tests = [
     { name: 'app opens Monday workout on Monday', pass: getScheduledDayInfo('2026-05-18').programmedDay === 'Monday' },
     { name: 'Tuesday shows recovery/next-session state', pass: getScheduledDayInfo('2026-05-19').programmedDay === null && getScheduledDayInfo('2026-05-19').nextDay === 'Wednesday' },
@@ -2075,17 +2125,18 @@ const runHelperTests = () => {
     { name: 'first launch shows optional tour prompt', pass: shouldShowFirstUseTourPrompt(defaultTourState) },
     { name: 'Skip prevents automatic tour from showing again', pass: !shouldShowFirstUseTourPrompt(skippedTourState) },
     { name: 'Start Tour begins guided spotlight flow', pass: startedTourState.hasSeenTour && !startedTourState.skippedTour && spotlightTourSteps.length === 4 },
-    { name: 'guided flow focuses Session Cap, Training Maxes, Focus area, Start button', pass: spotlightTourSteps.map((step) => step.target).join(',') === 'session-cap,training-maxes,focus-area,start-button' },
-    { name: 'Start button step does not break Start Workout', pass: spotlightTourSteps.some((step) => step.target === 'start-button' && step.waitsForStart) },
-    { name: 'final tour step has no Skip action', pass: finalTourStep.waitsForStart && /Ready to train/.test(finalTourStep.title) },
-    { name: 'final Start Workout CTA starts session and completes tour', pass: getTimerPrimaryAction('idle').action === 'start' && Boolean(markTourCompleted(startedTourState).tourCompletedAt) },
-    { name: 'Session Cap step mentions Start, timer, and readiness', pass: /Start/i.test(sessionCapStep.body) && /timer keeps pace/i.test(sessionCapStep.body) && /readiness/i.test(sessionCapStep.body) },
+    { name: 'guided flow spotlights Start, timer, readiness, and Focus', pass: spotlightTourSteps.map((step) => step.target).join(',') === 'start-button,session-timer,readiness-control,focus-area' },
+    { name: 'Start button step keeps the real Start Workout control active', pass: startStep?.target === 'start-button' && !startStep.waitsForStart },
+    { name: 'tour copy stays concise and athlete-focused', pass: [startStep, timerStep, readinessStep, focusStep].every((step) => step?.body.split(/\s+/).length <= 12) },
+    { name: 'recovery-day tour has a real next-session target', pass: recoveryStep?.target === 'recovery-next' },
+    { name: 'real Start Workout click completes tour', pass: getTimerPrimaryAction('idle').action === 'start' && Boolean(markTourCompleted(startedTourState).tourCompletedAt) },
+    { name: 'Timer step explains clock handling', pass: /clock/i.test(timerStep?.body || '') },
     { name: 'Complete Workout hint explains what it updates', pass: /saves the session|updates coaching|feeds Progress/i.test(completeHintText) },
-    { name: 'logging hint explains progression/coaching impact', pass: /Reps, load, effort, and feel shape the next target/i.test(loggingHintText) },
+    { name: 'logging hint explains progression/coaching impact', pass: /Load and reps|actually moved/i.test(loggingHintText) },
     { name: 'Progress hint explains completed exposures', pass: /completed exposures/i.test(progressHintText) },
     { name: 'tour card is fully visible for every tour step', pass: parseFloat(visibleTourLayout.style.left) >= 14 && parseFloat(visibleTourLayout.style.left) + parseFloat(visibleTourLayout.style.width) <= 390 - 14 },
     { name: 'clicking Next scrolls/focuses the target into view', pass: typeof HTMLElement !== 'undefined' ? typeof HTMLElement.prototype.scrollIntoView === 'function' : true },
-    { name: 'clicking Back scrolls/focuses previous target into view', pass: spotlightTourSteps[0].target === 'session-cap' && spotlightTourSteps[1].target === 'training-maxes' },
+    { name: 'clicking Back scrolls/focuses previous target into view', pass: spotlightTourSteps[0].target === 'start-button' && spotlightTourSteps[1].target === 'session-timer' },
     { name: 'no tour card is clipped inside highlighted section', pass: visibleTourLayout.mode === 'anchored' && !Object.prototype.hasOwnProperty.call(visibleTourLayout.style, 'position') },
     { name: 'mobile viewport fallback works', pass: bottomTourLayout.mode === 'bottom' && bottomTourLayout.placement === 'bottom' },
     { name: 'tour card can position above low targets', pass: aboveTourLayout.placement === 'above' },
@@ -2093,7 +2144,7 @@ const runHelperTests = () => {
     { name: 'Replay App Tour can reset tour state', pass: markTourStarted(createDefaultTourState()).hasSeenTour && !markTourStarted(createDefaultTourState()).skippedTour },
     { name: 'Reset flow asks whether to show tour again', pass: resetHistoryOnlyState.tourState.tourVersion === TOUR_VERSION && shouldShowFirstUseTourPrompt(resetHistoryOnlyState.tourState) },
     { name: 'tour cards no longer have large blank bottom spacing', pass: true },
-    { name: 'contextual hints only appear once', pass: hasSeenCoachNudge(hintedTourState, 'set-logging') && !hasSeenCoachNudge(hintedTourState, 'rest-timer') },
+    { name: 'contextual hints only appear once', pass: hasSeenCoachNudge(hintedTourState, 'load-entry') && !hasSeenCoachNudge(hintedTourState, 'rest-timer') },
     { name: 'coach nudge dismissal updates only hint history', pass: hasSeenCoachNudge(markCoachNudgeSeen(completedTourState, 'rest-timer', '2026-05-18T12:02:00.000Z'), 'rest-timer') },
     { name: 'reduced-motion disables movement-heavy tour animation', pass: true },
     { name: 'normal workout flow works if tour is skipped', pass: markTourSkipped(defaultTourState).skippedTour && getWorkoutState({ sessionTimer: createTimer(50), sessionLogs: [], currentCompletionSummary: null, isTodayCompleted: false }) === 'notStarted' },
@@ -2158,6 +2209,8 @@ export default function WorkoutTrackerApp() {
   const [tourStepIndex, setTourStepIndex] = useState(0)
   const [tourMode, setTourMode] = useState(null)
   const [tourCardLayout, setTourCardLayout] = useState(() => getTourCardLayout(null))
+  const [tourRecoveryStartDay, setTourRecoveryStartDay] = useState(null)
+  const [contextHintTriggers, setContextHintTriggers] = useState({})
   const [showPostResetTourPrompt, setShowPostResetTourPrompt] = useState(false)
   const [showTests, setShowTests] = useState(false)
   const didHydrateTimersRef = useRef(false)
@@ -2183,8 +2236,9 @@ export default function WorkoutTrackerApp() {
   const sessionId = createSessionId(workoutDate, day, sessionInstance)
   const completionKey = createCompletionKey(workoutDate, day)
   const testResults = useMemo(() => (devChecksEnabled ? runHelperTests() : null), [devChecksEnabled])
-  const activeTourTarget = tourMode === 'spotlight' ? spotlightTourSteps[tourStepIndex]?.target : null
-  const activeTourStep = tourMode === 'spotlight' ? spotlightTourSteps[tourStepIndex] : null
+  const activeTourSteps = tourRecoveryStartDay ? recoverySpotlightTourSteps : spotlightTourSteps
+  const activeTourTarget = tourMode === 'spotlight' ? activeTourSteps[tourStepIndex]?.target : null
+  const activeTourStep = tourMode === 'spotlight' ? activeTourSteps[tourStepIndex] : null
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -2763,11 +2817,6 @@ export default function WorkoutTrackerApp() {
     percent: Math.round((sessionProgressDone / sessionProgressTotal) * 100),
   }
 
-  const estimatedMinutes = useMemo(() => {
-    const setCount = session.exercises.reduce((sum, exercise) => sum + (exercise.sets || 1), 0)
-    return Math.min(50, Math.round(setCount * 2.1))
-  }, [session])
-
   const sessionLogs = sessionLog.filter((entry) => entry.sessionId === sessionId)
   const coachInsights = useMemo(() => buildCoachInsights({ logs: sessionLogs, plan: session, readiness }), [sessionLogs, session, readiness])
   const suggestedAdjustments = useMemo(() => findRepeatedIssueSuggestions(sessionLog, suggestionStatus), [sessionLog, suggestionStatus])
@@ -2777,7 +2826,6 @@ export default function WorkoutTrackerApp() {
   const activeExercise = session.exercises[focusIdx] || session.exercises[0]
   const activeExerciseTarget = activeExercise ? getExerciseTarget(activeExercise) : null
   const activeExerciseWeight = activeExerciseTarget?.load || null
-  const activeExerciseLastLog = sessionLog.find((entry) => entry.exercise === activeExercise?.name && entry.sessionId !== sessionId)
   const activeExerciseId = `${day}-${focusIdx}`
   const activeExerciseDraft = activeExercise ? getDraftForExercise(setDrafts[activeExerciseId], activeExercise, activeExerciseWeight) : null
   const activeRestTimer = getActiveRestTimer(restTimers, now, day)
@@ -2786,8 +2834,10 @@ export default function WorkoutTrackerApp() {
     ? completionSummary
     : completedSessions.find((item) => item.sessionId === sessionId)
       || completedSessions.find((item) => item.sessionId === completedWorkoutKeys[completionKey])
+  const showFreshCompletionSummary = Boolean(completionSummary?.sessionId === sessionId && currentCompletionSummary)
   const isTodayCompleted = Boolean(completedWorkoutKeys[completionKey] && currentCompletionSummary && sessionId === completedWorkoutKeys[completionKey])
   const workoutState = getWorkoutState({ sessionTimer, sessionLogs, currentCompletionSummary, isTodayCompleted })
+  const isWorkoutActive = sessionTimer.status !== 'idle' || sessionLogs.length > 0
   const showNextTimeProgression = shouldShowNextTimeProgression(workoutState)
   const timerPrimaryAction = getTimerPrimaryAction(sessionTimer.status)
   const progressionAdvice = (() => {
@@ -2864,7 +2914,11 @@ export default function WorkoutTrackerApp() {
   }, [activeWorkoutSnapshot, now])
 
   const switchWorkoutDay = useCallback((targetDay, { manual = true } = {}) => {
-    if (!weeklyPlan[targetDay] || targetDay === day) return
+    if (!weeklyPlan[targetDay]) return
+    if (targetDay === day) {
+      if (manual) setManualDaySelected(true)
+      return
+    }
 
     if (manual) setManualDaySelected(true)
     setFocusForDay(targetDay, getFocusForDay(focusByDay, targetDay))
@@ -2908,8 +2962,10 @@ export default function WorkoutTrackerApp() {
 
   const startTour = () => {
     setMainView('workout')
+    const recoveryNextDay = isRecoveryState ? scheduleInfo.nextDay : null
+    setTourRecoveryStartDay(recoveryNextDay)
     const tourDay = isRecoveryState
-      ? scheduleInfo.nextDay
+      ? day
       : isTodayCompleted
         ? getNextProgrammedDay(workoutDate)
         : day
@@ -2924,6 +2980,7 @@ export default function WorkoutTrackerApp() {
   const skipTour = () => {
     setTourState((prev) => markTourSkipped(prev))
     setTourMode(null)
+    setTourRecoveryStartDay(null)
     setShowPostResetTourPrompt(false)
   }
 
@@ -2931,12 +2988,7 @@ export default function WorkoutTrackerApp() {
     setTourState((prev) => markTourCompleted(prev))
     setTourMode(null)
     setTourStepIndex(0)
-  }
-
-  const startWorkoutFromTour = () => {
-    const timestamp = Date.now()
-    setSessionTimer((prev) => applyTimerPrimaryAction(prev, timerPrimaryAction.action, timestamp))
-    completeTour()
+    setTourRecoveryStartDay(null)
   }
 
   const replayTour = () => {
@@ -2950,11 +3002,15 @@ export default function WorkoutTrackerApp() {
     setTourState((prev) => markCoachNudgeSeen(prev, hintId))
   }
 
-  const resetConfirmDisabled = resetFlow.step === 2 && resetFlow.confirmText.trim().toUpperCase() !== 'RESET'
+  const triggerContextHint = (hintId) => {
+    setContextHintTriggers((prev) => (prev[hintId] ? prev : { ...prev, [hintId]: true }))
+  }
+
   const resetCopy = getResetCopy(resetFlow.mode, resetFlow.step)
   const canShowContextHints = Boolean(tourState.tourCompletedAt)
   const showTourPrompt = !showPostResetTourPrompt && tourMode === null && shouldShowFirstUseTourPrompt(tourState)
   const shouldShowContextHint = (hintId) => canShowContextHints && !hasSeenCoachNudge(tourState, hintId)
+  const shouldShowTriggeredContextHint = (hintId) => shouldShowContextHint(hintId) && Boolean(contextHintTriggers[hintId])
   const getTourTargetClass = (target) => activeTourTarget === target ? ' tour-highlight' : ''
   const editingMaxMeta = editingMaxKey ? {
     key: editingMaxKey,
@@ -2983,7 +3039,7 @@ export default function WorkoutTrackerApp() {
         <button type="button" className={mainView === 'progress' ? 'active' : ''} onClick={() => setMainView('progress')}>Progress</button>
       </nav>
 
-      {mainView === 'workout' && activeWorkoutSnapshot && ['inProgress', 'resting'].includes(activeWorkoutSnapshot.sessionStatus) && (
+      {mainView !== 'workout' && activeWorkoutSnapshot && ['inProgress', 'resting'].includes(activeWorkoutSnapshot.sessionStatus) && (
         <section className="active-session-banner" aria-label="Active session">
           <div>
             <strong>{activeWorkoutSnapshot.currentExerciseName}</strong>
@@ -3015,8 +3071,9 @@ export default function WorkoutTrackerApp() {
                 <p>{latestCompletedSummary.day} on {latestCompletedSummary.date}. Top: {latestCompletedSummary.topPerformance}</p>
               </div>
             )}
-            <button type="button" className="button secondary full" onClick={() => {
-              requestDayChange(scheduleInfo.nextDay)
+            <button ref={(node) => { tourTargetRefs.current['recovery-next'] = node }} type="button" className={`button secondary full${getTourTargetClass('recovery-next')}`} onClick={() => {
+              switchWorkoutDay(scheduleInfo.nextDay, { manual: true })
+              if (activeTourTarget === 'recovery-next') completeTour()
             }}>
               Open Next Session
             </button>
@@ -3035,31 +3092,66 @@ export default function WorkoutTrackerApp() {
 
       {isTodayCompleted && (
         <section className="card">
-          <div className="card-content stack">
-            <div className="section-heading">
-              <Icon name="check" />
-              <h2>Today's session is already completed.</h2>
-            </div>
-            {currentCompletionSummary && (
-              <div className="summary-box">
-                <strong>{currentCompletionSummary.day} summary</strong>
-                <p>{currentCompletionSummary.completedExercises.length} done, {currentCompletionSummary.skippedExercises.length} skipped. Top: {currentCompletionSummary.topPerformance}</p>
+          {showFreshCompletionSummary ? (
+            <div className="card-content stack">
+              <div className="section-heading">
+                <Icon name="check" />
+                <h2>Completed Session Summary</h2>
               </div>
-            )}
-            <div className="button-row">
-              <button type="button" className="button primary grow" onClick={() => setMainView('progress')}>View Summary</button>
-              <button type="button" className="button secondary grow" onClick={startNewSessionAnyway}>Start New Session Anyway</button>
+              <div className="summary-grid">
+                <div>
+                  <span>Completed</span>
+                  <strong>{currentCompletionSummary.completedExercises.length}</strong>
+                </div>
+                <div>
+                  <span>Skipped</span>
+                  <strong>{currentCompletionSummary.skippedExercises.length}</strong>
+                </div>
+              </div>
+              <p className="muted">Top performance: {currentCompletionSummary.topPerformance}</p>
+              {currentCompletionSummary.skippedExercises.length > 0 && <p className="muted">Skipped: {currentCompletionSummary.skippedExercises.join(', ')}</p>}
+              {currentCompletionSummary.formFlags.length > 0 && <p className="log-note">Flags: {currentCompletionSummary.formFlags.map((flag) => `${flag.exercise} (${flag.issue})`).join(', ')}</p>}
+              {currentCompletionSummary.sprintNotes.length > 0 && currentCompletionSummary.sprintNotes.map((note) => <p className="muted" key={note}>{note}</p>)}
+              <div className="advice-list">
+                {currentCompletionSummary.coachRecommendations.length ? currentCompletionSummary.coachRecommendations.map((item) => (
+                  <div className="coach-note" key={item.text}>
+                    <span className={`insight-chip ${item.labelClass || 'technical'}`}>{item.label || 'Coach note'}</span>
+                    <p>{item.text}</p>
+                  </div>
+                )) : <p>No coach recommendations yet.</p>}
+              </div>
+              <div className="button-row">
+                <button type="button" className="button primary grow" onClick={() => setMainView('progress')}>View Progress</button>
+                <button type="button" className="button secondary grow" onClick={startNewSessionAnyway}>Start New Session Anyway</button>
+              </div>
             </div>
-            <nav className="mini-day-tabs" aria-label="Choose another workout day">
-              {Object.keys(weeklyPlan).map((currentDay) => (
-                <button key={currentDay} type="button" onClick={() => {
-                  requestDayChange(currentDay)
-                }}>
-                  {currentDay.slice(0, 3)}
-                </button>
-              ))}
-            </nav>
-          </div>
+          ) : (
+            <div className="card-content stack">
+              <div className="section-heading">
+                <Icon name="check" />
+                <h2>Today's session is already completed.</h2>
+              </div>
+              {currentCompletionSummary && (
+                <div className="summary-box">
+                  <strong>{currentCompletionSummary.day} summary</strong>
+                  <p>{currentCompletionSummary.completedExercises.length} done, {currentCompletionSummary.skippedExercises.length} skipped. Top: {currentCompletionSummary.topPerformance}</p>
+                </div>
+              )}
+              <div className="button-row">
+                <button type="button" className="button primary grow" onClick={() => setMainView('progress')}>View Summary</button>
+                <button type="button" className="button secondary grow" onClick={startNewSessionAnyway}>Start New Session Anyway</button>
+              </div>
+              <nav className="mini-day-tabs" aria-label="Choose another workout day">
+                {Object.keys(weeklyPlan).map((currentDay) => (
+                  <button key={currentDay} type="button" onClick={() => {
+                    requestDayChange(currentDay)
+                  }}>
+                    {currentDay.slice(0, 3)}
+                  </button>
+                ))}
+              </nav>
+            </div>
+          )}
         </section>
       )}
 
@@ -3079,14 +3171,14 @@ export default function WorkoutTrackerApp() {
         </section>
       )}
 
-      <section ref={(node) => { tourTargetRefs.current['session-cap'] = node }} className={`card session-card${getTourTargetClass('session-cap')}`}>
+      <section ref={(node) => { tourTargetRefs.current['session-cap'] = node }} className={`card session-card${isWorkoutActive ? ' active-workout-card' : ''}${getTourTargetClass('session-cap')}`}>
         <div className="card-content stack">
           <div className="split-row">
             <div>
               <p className="eyebrow">Session cap</p>
               <p className="metric"><Icon name="timer" /> Max 50 min</p>
             </div>
-            <span className="badge badge-strong">{formatTime(sessionRemaining)}</span>
+            <span ref={(node) => { tourTargetRefs.current['session-timer'] = node }} className={`badge badge-strong${getTourTargetClass('session-timer')}`}>{formatTime(sessionRemaining)}</span>
           </div>
 
           <div className="timer-control-row">
@@ -3125,11 +3217,9 @@ export default function WorkoutTrackerApp() {
             </div>
           )}
 
-          <p className="muted small">
-            {sessionTimer.status === 'idle' && sessionLogs.length === 0
-              ? 'Start when you begin training. Your logs and timers are saved on this device.'
-              : `Estimated workout length: ${estimatedMinutes} min. Countdown is set to your 50-minute cap.`}
-          </p>
+          {!isWorkoutActive && (
+            <p className="muted small">Start when you begin training. Your logs and timers are saved on this device.</p>
+          )}
 
           <div className="stack tight">
             <div className="split-row progress-label">
@@ -3141,7 +3231,7 @@ export default function WorkoutTrackerApp() {
             </div>
           </div>
 
-          <label className="field">
+          <label ref={(node) => { tourTargetRefs.current['readiness-control'] = node }} className={`field${getTourTargetClass('readiness-control')}`}>
             <span><Icon name="gauge" /> Today's readiness</span>
             <select value={readiness} onChange={(event) => setReadiness(event.target.value)}>
               <option value="flat">Flat / sore: reduce targets 5%</option>
@@ -3152,29 +3242,48 @@ export default function WorkoutTrackerApp() {
         </div>
       </section>
 
-      <section ref={(node) => { tourTargetRefs.current['training-maxes'] = node }} className={`card${getTourTargetClass('training-maxes')}`}>
-        <div className="card-content stack tight">
-          <div className="split-row">
-            <div className="section-heading">
+      <section ref={(node) => { tourTargetRefs.current['training-maxes'] = node }} className={`${isWorkoutActive ? 'training-maxes-strip' : 'card'}${getTourTargetClass('training-maxes')}`}>
+        {isWorkoutActive ? (
+          <>
+            <div className="training-maxes-strip-label">
               <Icon name="trend" />
-              <h2>Training Maxes</h2>
+              <span>Maxes</span>
             </div>
-          </div>
-          {dayTrainingMaxes.length ? (
-            <div className="max-summary">
-              {dayTrainingMaxes.map((item) => (
-                <button type="button" key={`${day}-${item.key}`} className="max-tile" onClick={() => openMaxEditor(item.key)}>
+            {dayTrainingMaxes.length ? (
+              dayTrainingMaxes.map((item) => (
+                <button type="button" key={`${day}-${item.key}`} className="max-chip-button" onClick={() => openMaxEditor(item.key)}>
                   <span>{item.label}</span>
-                  <strong>{prs[item.key]} <small>{item.unit}</small></strong>
-                  {item.context && <em>{item.context}</em>}
+                  <strong>{prs[item.key]}</strong>
                 </button>
-              ))}
+              ))
+            ) : (
+              <p className="muted small">No maxes needed for track work.</p>
+            )}
+          </>
+        ) : (
+          <div className="card-content stack tight">
+            <div className="split-row">
+              <div className="section-heading">
+                <Icon name="trend" />
+                <h2>Training Maxes</h2>
+              </div>
             </div>
-          ) : (
-            <p className="muted small">No lifting maxes needed for track work.</p>
-          )}
-          {saved && <p className="success small">Saved to this device.</p>}
-        </div>
+            {dayTrainingMaxes.length ? (
+              <div className="max-summary">
+                {dayTrainingMaxes.map((item) => (
+                  <button type="button" key={`${day}-${item.key}`} className="max-tile" onClick={() => openMaxEditor(item.key)}>
+                    <span>{item.label}</span>
+                    <strong>{prs[item.key]} <small>{item.unit}</small></strong>
+                    {item.context && <em>{item.context}</em>}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="muted small">No lifting maxes needed for track work.</p>
+            )}
+            {saved && <p className="success small">Saved to this device.</p>}
+          </div>
+        )}
       </section>
 
       <nav className="tabs" aria-label="Workout days">
@@ -3188,46 +3297,21 @@ export default function WorkoutTrackerApp() {
       </nav>
 
       <section className="card day-card">
-        <div className="card-content">
-          <h2>{day}: {session.title}</h2>
-          <p className="muted">{session.goal}</p>
-          <span className="badge subtle">{session.cap}</span>
-        </div>
-      </section>
-
-      <section ref={(node) => { tourTargetRefs.current['focus-area'] = node }} className={`card focus-card${getTourTargetClass('focus-area')}`}>
-        <div className="card-content stack tight">
-          <div className="split-row">
-            <div>
-              <p className="eyebrow">Current exercise</p>
-              <h2>{focusIdx + 1}. {activeExercise.name}</h2>
-            </div>
-            <div className="focus-actions">
-              <span className="badge badge-strong">{formatTime(sessionRemaining)}</span>
-              <button type="button" className="text-button" onClick={() => setFocusMode((prev) => !prev)}>
-                {focusMode ? 'Show all' : 'Focus'}
-              </button>
-            </div>
+        <div className="card-content day-card-content">
+          <div>
+            <h2>{day}: {session.title}</h2>
+            <p className="muted">{session.goal}</p>
+            <span className="badge subtle">{session.cap}</span>
           </div>
-          <div className="focus-meta">
-            <span>{activeExercise.sets} x {activeExercise.reps}</span>
-            <span>{activeExercise.rest} rest</span>
-            <span>{activeExerciseTarget?.label || (activeExerciseWeight ? `${activeExerciseWeight} lb target` : activeExercise.load || getActivityType(activeExercise))}</span>
-          </div>
-          {activeExerciseLastLog && (
-            <p className="muted small">Last logged: {summarizeLogEntry(activeExerciseLastLog)}</p>
-          )}
-          <div className="button-grid two">
-            <button type="button" className="button secondary" onClick={() => moveFocus(-1)}>Prev</button>
-            <button type="button" className="button secondary" onClick={() => moveFocus(1)}>Next</button>
-          </div>
-          {showReadyToCompletePrompt && (
-            <div className="complete-nudge">
-              <p>Workout logged. Ready to complete?</p>
-              <button type="button" className="button primary full" onClick={requestCompleteWorkout}>
-                <Icon name="check" /> Complete Workout
-              </button>
-            </div>
+          {!focusMode && (
+            <button
+              ref={(node) => { tourTargetRefs.current['focus-area'] = node }}
+              type="button"
+              className={`focus-mode-toggle${getTourTargetClass('focus-area')}`}
+              onClick={() => setFocusMode(true)}
+            >
+              Focus
+            </button>
           )}
         </div>
       </section>
@@ -3248,6 +3332,20 @@ export default function WorkoutTrackerApp() {
           return (
             <article key={id} ref={(node) => { exerciseRefs.current[id] = node }} className="card exercise-card">
               <div className="card-content stack">
+                {focusMode && (
+                  <div className="focus-card-toolbar" aria-label="Focused workout view">
+                    <div className="focus-presence">
+                      <span aria-hidden="true" />
+                      <strong>Focus Mode On</strong>
+                      <em>{idx + 1}/{session.exercises.length}</em>
+                    </div>
+                    <nav className="focus-nav" aria-label="Focus navigation">
+                      <button type="button" onClick={() => moveFocus(-1)} aria-label="Previous exercise">‹</button>
+                      <button type="button" onClick={() => moveFocus(1)} aria-label="Next exercise">›</button>
+                    </nav>
+                    <button type="button" className="focus-exit" onClick={() => setFocusMode(false)}>All</button>
+                  </div>
+                )}
                 <div className="split-row top-align">
                   <div>
                     <h3>{idx + 1}. {exercise.name}</h3>
@@ -3316,7 +3414,11 @@ export default function WorkoutTrackerApp() {
                             min="0"
                             inputMode="decimal"
                             value={set.weight}
-                            onChange={(event) => updateSetDraft(idx, setIdx, 'weight', event.target.value)}
+                            onFocus={() => triggerContextHint('load-entry')}
+                            onChange={(event) => {
+                              triggerContextHint('load-entry')
+                              updateSetDraft(idx, setIdx, 'weight', event.target.value)
+                            }}
                             aria-label={`${exercise.name} set ${setIdx + 1} load`}
                           />
                           <input
@@ -3324,7 +3426,11 @@ export default function WorkoutTrackerApp() {
                             min="0"
                             inputMode="numeric"
                             value={set.reps}
-                            onChange={(event) => updateSetDraft(idx, setIdx, 'reps', event.target.value)}
+                            onFocus={() => triggerContextHint('load-entry')}
+                            onChange={(event) => {
+                              triggerContextHint('load-entry')
+                              updateSetDraft(idx, setIdx, 'reps', event.target.value)
+                            }}
                             aria-label={`${exercise.name} set ${setIdx + 1} reps`}
                           />
                           <input
@@ -3333,15 +3439,25 @@ export default function WorkoutTrackerApp() {
                             max="5"
                             inputMode="numeric"
                             value={set.rir}
-                            onChange={(event) => updateSetDraft(idx, setIdx, 'rir', event.target.value)}
+                            onFocus={() => triggerContextHint('rir-entry')}
+                            onChange={(event) => {
+                              triggerContextHint('rir-entry')
+                              updateSetDraft(idx, setIdx, 'rir', event.target.value)
+                            }}
                             aria-label={`${exercise.name} set ${setIdx + 1} reps in reserve`}
                           />
                         </div>
                       ))}
                     </div>
-                    {shouldShowContextHint('set-logging') && idx === focusIdx && sessionTimer.status !== 'idle' && (
-                      <CoachNudge title="Log what actually happened." onDismiss={() => dismissContextHint('set-logging')}>
-                        Reps, load, effort, and feel shape the next target.
+                    {shouldShowTriggeredContextHint('load-entry') && idx === focusIdx && sessionTimer.status !== 'idle' && (
+                      <CoachNudge title="Numbers set the dose." onDismiss={() => dismissContextHint('load-entry')}>
+                        Load and reps tell me what actually moved today.
+                      </CoachNudge>
+                    )}
+
+                    {shouldShowTriggeredContextHint('rir-entry') && idx === focusIdx && sessionTimer.status !== 'idle' && (
+                      <CoachNudge title="Effort shapes progression." onDismiss={() => dismissContextHint('rir-entry')}>
+                        RIR helps decide whether to progress, repeat, or hold.
                       </CoachNudge>
                     )}
 
@@ -3359,9 +3475,17 @@ export default function WorkoutTrackerApp() {
 
                     <label className="field">
                       <span>Quick note</span>
-                      <input value={draft.notes} onChange={(event) => updateDraftField(idx, 'notes', event.target.value)} placeholder="e.g., right side tilted, knee felt good" />
+                      <input
+                        value={draft.notes}
+                        onFocus={() => triggerContextHint('quick-notes')}
+                        onChange={(event) => {
+                          triggerContextHint('quick-notes')
+                          updateDraftField(idx, 'notes', event.target.value)
+                        }}
+                        placeholder="e.g., right side tilted, knee felt good"
+                      />
                     </label>
-                    {shouldShowContextHint('quick-notes') && idx === focusIdx && draft.notes.length > 0 && (
+                    {shouldShowTriggeredContextHint('quick-notes') && idx === focusIdx && draft.notes.length > 0 && (
                       <CoachNudge title="Mention what mattered." onDismiss={() => dismissContextHint('quick-notes')}>
                         Use notes for what numbers miss — pain, tilt, fatigue, imbalance, or anything that changed the set.
                       </CoachNudge>
@@ -3433,6 +3557,14 @@ export default function WorkoutTrackerApp() {
                 )}
 
                 <button type="button" onClick={() => logExercise(idx)} className="button primary full"><Icon name="clipboard" /> Log Exercise</button>
+                {focusMode && showReadyToCompletePrompt && idx === focusIdx && (
+                  <div className="complete-nudge">
+                    <p>Workout logged. Ready to complete?</p>
+                    <button type="button" className="button primary full" onClick={requestCompleteWorkout}>
+                      <Icon name="check" /> Complete Workout
+                    </button>
+                  </div>
+                )}
               </div>
             </article>
           )
@@ -3927,12 +4059,11 @@ export default function WorkoutTrackerApp() {
                   </>
                 ) : (
                   <>
-                    <label className="field">
-                      <span>Confirmation</span>
-                      <input value={resetFlow.confirmText} onChange={(event) => setResetFlow((prev) => ({ ...prev, confirmText: event.target.value }))} placeholder="Type RESET" />
-                    </label>
+                    <div className="confirm-box">
+                      <p>This cannot be undone. Confirm only if you want to clear this device’s training data.</p>
+                    </div>
                     <div className="button-row">
-                      <button type="button" className="button danger-button grow" disabled={resetConfirmDisabled} onClick={() => resetAllHistory(resetFlow.mode === 'history')}>
+                      <button type="button" className="button danger-button grow" onClick={() => resetAllHistory(resetFlow.mode === 'history')}>
                         Confirm Reset
                       </button>
                       <button type="button" className="button secondary grow" onClick={() => setResetFlow((prev) => ({ ...prev, step: 1, confirmText: '' }))}>Back</button>
@@ -3991,12 +4122,11 @@ export default function WorkoutTrackerApp() {
             <TourCoachCard
               step={activeTourStep}
               index={tourStepIndex}
-              total={spotlightTourSteps.length}
+              total={activeTourSteps.length}
               layout={tourCardLayout}
               onBack={() => setTourStepIndex((prev) => Math.max(0, prev - 1))}
-              onNext={() => setTourStepIndex((prev) => Math.min(spotlightTourSteps.length - 1, prev + 1))}
+              onNext={() => setTourStepIndex((prev) => Math.min(activeTourSteps.length - 1, prev + 1))}
               onSkip={skipTour}
-              onStartWorkout={startWorkoutFromTour}
             />
           )}
         </>
