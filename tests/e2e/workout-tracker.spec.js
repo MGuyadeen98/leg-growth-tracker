@@ -107,7 +107,7 @@ const completeMondayBoxSquatWorkout = async (page) => {
   await startWorkout(page)
   await logStrengthSet(page, 'High-Bar Box Squat', { load: '225', reps: '8', rir: '2', note: 'clean squat sets' })
   await page.getByRole('button', { name: 'Finish Session' }).click()
-  await page.getByRole('button', { name: 'Complete Anyway' }).click()
+  await page.getByRole('button', { name: 'Finish Anyway' }).click()
   await expect(page.getByRole('heading', { name: 'Completed Session Summary' })).toBeVisible()
 }
 
@@ -221,7 +221,7 @@ test.describe('Performance Tracker critical flows', () => {
     await expect(page.getByRole('heading', { name: 'First time here?' })).toHaveCount(0)
 
     await openSettings(page)
-    await page.getByRole('button', { name: 'Replay App Tour' }).click()
+    await page.getByRole('button', { name: 'Replay' }).click()
     await expect(page.getByRole('heading', { name: 'Start with pace.' })).toBeVisible()
     await assertTourCardFullyVisible(page)
   })
@@ -254,18 +254,31 @@ test.describe('Performance Tracker critical flows', () => {
     await completeSpotlightTour(page)
     await startWorkout(page)
 
-    await page.getByRole('spinbutton', { name: 'High-Bar Box Squat set 1 reps', exact: true }).fill('8')
+    const repsInput = page.getByRole('spinbutton', { name: 'High-Bar Box Squat set 1 reps', exact: true })
+    const rirInput = page.getByLabel('High-Bar Box Squat set 1 reps in reserve')
+
+    await repsInput.click()
     await expect(page.locator('.micro-spotlight-card')).toContainText('Actual reps help shape progression.')
     await expect(page.locator('.micro-spotlight-card')).toHaveCount(1)
+    await expect(repsInput).toHaveValue('')
 
-    await page.getByLabel('High-Bar Box Squat set 1 reps in reserve').fill('2')
+    await rirInput.click()
     await expect(page.locator('.micro-spotlight-card')).toContainText('RIR tells us how much you had left.')
     await expect(page.locator('.micro-spotlight-card')).toHaveCount(1)
+    await expect(rirInput).toHaveValue('')
 
-    await exerciseCard(page, 'High-Bar Box Squat').getByPlaceholder(/right side tilted/).fill('felt clean')
+    await page.locator('.micro-spotlight-card').getByRole('button', { name: 'Got it' }).click()
+    await repsInput.fill('8')
+    await rirInput.fill('2')
+
+    const noteInput = exerciseCard(page, 'High-Bar Box Squat').getByPlaceholder(/right side tilted/)
+    await noteInput.click()
     await expect(page.locator('.micro-spotlight-card')).toContainText('Small notes help the coach spot patterns.')
     await expect(page.locator('.micro-spotlight-card')).toHaveCount(1)
+    await expect(noteInput).toHaveValue('')
 
+    await page.locator('.micro-spotlight-card').getByRole('button', { name: 'Got it' }).click()
+    await noteInput.fill('felt clean')
     await page.getByLabel('High-Bar Box Squat set 1 load').fill('225')
     await page.locator('label.field:has-text("Overall feel") select').first().selectOption('good')
     await exerciseCard(page, 'High-Bar Box Squat').getByRole('button', { name: /Log Exercise/ }).click()
@@ -278,26 +291,27 @@ test.describe('Performance Tracker critical flows', () => {
     await expect(page.locator('.micro-spotlight-card')).toHaveCount(0)
   })
 
-  test('rest timer completion opens Time’s Up overlay once', async ({ page }) => {
+  test('rest timer completion opens calm rest-complete overlay once', async ({ page }) => {
     await page.clock.install()
     await openMondayWorkout(page)
     await startWorkout(page)
     await page.getByLabel('Start High-Bar Box Squat rest timer').click()
     await page.clock.fastForward(121_000)
 
-    await expect(page.getByRole('heading', { name: "Time's Up" })).toBeVisible()
-    await expect(page.getByText('Next set is ready')).toBeVisible()
-    await page.getByRole('button', { name: 'Dismiss' }).click()
-    await expect(page.getByRole('heading', { name: "Time's Up" })).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: 'Back in.' })).toBeVisible()
+    await expect(page.getByText('REST COMPLETE')).toBeVisible()
+    await expect(page.getByText('High-Bar Box Squat • Set 1/4')).toBeVisible()
+    await page.getByRole('button', { name: 'Resume' }).click()
+    await expect(page.getByRole('heading', { name: 'Back in.' })).toHaveCount(0)
     await page.clock.fastForward(2_000)
-    await expect(page.getByRole('heading', { name: "Time's Up" })).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: 'Back in.' })).toHaveCount(0)
   })
 
   test('complete workout, progress tab, and day switching are reachable', async ({ page }) => {
     await openMondayWorkout(page)
     await startWorkout(page)
     await page.getByRole('button', { name: 'Finish Session' }).click()
-    await page.getByRole('button', { name: 'Complete Anyway' }).click()
+    await page.getByRole('button', { name: 'Finish Anyway' }).click()
     await expect(page.getByRole('heading', { name: 'Completed Session Summary' })).toBeVisible()
 
     await page.getByRole('button', { name: 'Progress', exact: true }).click()
@@ -318,6 +332,8 @@ test.describe('Performance Tracker critical flows', () => {
     await page.locator('.max-tile').filter({ hasText: 'Box squat' }).click()
     const microHint = page.locator('.micro-spotlight-card')
     if (await microHint.isVisible().catch(() => false)) {
+      await expect(microHint).toContainText('Adjust your max lifts to shape the exercise targets to you.')
+      await expect(page.getByRole('heading', { name: /Box squat Max/ })).toHaveCount(0)
       await microHint.getByRole('button', { name: 'Got it' }).click()
       await page.locator('.max-tile').filter({ hasText: 'Box squat' }).click()
     }
@@ -362,7 +378,7 @@ test.describe('Performance Tracker critical flows', () => {
     await expect(page.locator('.done-icon')).toHaveCount(2)
 
     await page.getByRole('button', { name: 'Finish Session' }).click()
-    await page.getByRole('button', { name: 'Complete Anyway' }).click()
+    await page.getByRole('button', { name: 'Finish Anyway' }).click()
     await expect(page.getByRole('heading', { name: 'Completed Session Summary' })).toBeVisible()
     await expect(page.locator('.summary-grid')).toContainText('2')
     await expect(page.getByText('Top performance:')).toBeVisible()
@@ -406,7 +422,7 @@ test.describe('Performance Tracker critical flows', () => {
     await openSettings(page)
     await expect(page.getByRole('button', { name: 'Export Backup' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Import Backup' })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Replay App Tour' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Replay' })).toBeVisible()
 
     await page.getByRole('button', { name: 'Reset' }).click()
     await expect(page.getByText('Reset workout history only?')).toBeVisible()
