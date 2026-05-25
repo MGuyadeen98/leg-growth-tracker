@@ -111,7 +111,7 @@ const completeMondayBoxSquatWorkout = async (page) => {
   await expect(page.getByRole('heading', { name: 'Completed Session Summary' })).toBeVisible()
 }
 
-const runResetFlow = async (page, mode) => {
+const runResetFlow = async (page, mode, { skipFreshTour = true } = {}) => {
   await openSettings(page)
   await page.getByRole('button', { name: 'Reset' }).click()
   if (mode === 'everything') {
@@ -123,8 +123,12 @@ const runResetFlow = async (page, mode) => {
   }
   await page.getByRole('button', { name: 'Continue' }).click()
   await page.getByRole('button', { name: 'Confirm Reset' }).click()
-  await expect(page.getByRole('heading', { name: 'Want the quick walkthrough again?' })).toBeVisible()
-  await page.getByRole('button', { name: 'No thanks' }).click()
+  if (mode === 'everything') {
+    await expect(page.getByRole('heading', { name: 'First time here?' })).toBeVisible()
+    if (skipFreshTour) await page.getByRole('button', { name: 'Skip for now' }).click()
+  } else {
+    await expect(page.getByRole('heading', { name: 'First time here?' })).toHaveCount(0)
+  }
 }
 
 const waitForStoredState = async (page, predicate) => {
@@ -152,6 +156,28 @@ const assertTourCardFullyVisible = async (page) => {
   expect(box.y).toBeGreaterThanOrEqual(0)
   expect(box.x + box.width).toBeLessThanOrEqual(viewport.width + 1)
   expect(box.y + box.height).toBeLessThanOrEqual(viewport.height + 1)
+}
+
+const swipeLocator = async (locator, { dx, dy = 0, startXRatio = 0.5, startYRatio = 0.28 }) => {
+  const box = await locator.boundingBox()
+  expect(box).toBeTruthy()
+  const startX = box.x + box.width * startXRatio
+  const startY = box.y + box.height * startYRatio
+  const pointer = { pointerId: 5, pointerType: 'touch', button: 0, buttons: 1, bubbles: true, cancelable: true }
+  await locator.dispatchEvent('pointerdown', { ...pointer, clientX: startX, clientY: startY })
+  await locator.dispatchEvent('pointermove', { ...pointer, clientX: startX + dx * 0.45, clientY: startY + dy * 0.45 })
+  await locator.dispatchEvent('pointermove', { ...pointer, clientX: startX + dx, clientY: startY + dy })
+  await locator.dispatchEvent('pointerup', { ...pointer, buttons: 0, clientX: startX + dx, clientY: startY + dy })
+}
+
+const expectFocusNavCentered = async (page) => {
+  const offset = await page.locator('.focus-nav').evaluate((nav) => {
+    const toolbar = nav.closest('.focus-card-toolbar')
+    const navRect = nav.getBoundingClientRect()
+    const toolbarRect = toolbar.getBoundingClientRect()
+    return Math.abs((navRect.left + navRect.width / 2) - (toolbarRect.left + toolbarRect.width / 2))
+  })
+  expect(offset).toBeLessThanOrEqual(4)
 }
 
 test.describe('Performance Tracker critical flows', () => {
@@ -249,6 +275,68 @@ test.describe('Performance Tracker critical flows', () => {
     await expect(page.getByText('High-Bar Box Squat').last()).toBeVisible()
   })
 
+  test('focus mode header and swipe navigation stay guarded', async ({ page }) => {
+    await openMondayWorkout(page)
+    await startWorkout(page)
+
+    const firstCard = exerciseCard(page, 'High-Bar Box Squat')
+    await swipeLocator(firstCard, { dx: -170 })
+    await expect(page.getByRole('heading', { name: /1\. High-Bar Box Squat/ })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /2\. Heel-Elevated Bulgarian Split Squat/ })).toBeVisible()
+
+    await page.getByRole('button', { name: 'Focus' }).click()
+    await expect(page.getByRole('heading', { name: /1\. High-Bar Box Squat/ })).toBeVisible()
+    await expect(page.getByText('Focus Mode', { exact: true })).toBeVisible()
+    await expect(page.getByText('Focus Mode On')).toHaveCount(0)
+    await expect(page.getByText('Focus Mode Off')).toHaveCount(0)
+    await expect(page.locator('.focus-nav em')).toHaveText('1/6')
+    await expectFocusNavCentered(page)
+
+    const focusedCard = () => page.locator('article.focused-exercise-card')
+
+    await swipeLocator(focusedCard(), { dx: 170 })
+    await expect(page.getByRole('heading', { name: /1\. High-Bar Box Squat/ })).toBeVisible()
+    await expect(page.locator('.focus-nav em')).toHaveText('1/6')
+    await expectFocusNavCentered(page)
+
+    await swipeLocator(focusedCard(), { dx: -170 })
+    await expect(page.getByRole('heading', { name: /2\. Heel-Elevated Bulgarian Split Squat/ })).toBeVisible()
+    await expect(page.locator('.focus-nav em')).toHaveText('2/6')
+    await expectFocusNavCentered(page)
+
+    await swipeLocator(focusedCard(), { dx: 170 })
+    await expect(page.getByRole('heading', { name: /1\. High-Bar Box Squat/ })).toBeVisible()
+
+    await focusedCard().getByRole('button', { name: 'Next exercise' }).click()
+    await expect(page.getByRole('heading', { name: /2\. Heel-Elevated Bulgarian Split Squat/ })).toBeVisible()
+    await focusedCard().getByRole('button', { name: 'Previous exercise' }).click()
+    await expect(page.getByRole('heading', { name: /1\. High-Bar Box Squat/ })).toBeVisible()
+
+    await swipeLocator(page.getByLabel('High-Bar Box Squat set 1 load'), { dx: -170 })
+    await expect(page.getByRole('heading', { name: /1\. High-Bar Box Squat/ })).toBeVisible()
+
+    await swipeLocator(focusedCard().getByRole('button', { name: /Log Exercise/ }), { dx: -170 })
+    await expect(page.getByRole('heading', { name: /1\. High-Bar Box Squat/ })).toBeVisible()
+
+    await swipeLocator(focusedCard(), { dx: -55 })
+    await expect(page.getByRole('heading', { name: /1\. High-Bar Box Squat/ })).toBeVisible()
+
+    await swipeLocator(focusedCard(), { dx: -140, dy: 150 })
+    await expect(page.getByRole('heading', { name: /1\. High-Bar Box Squat/ })).toBeVisible()
+
+    for (let index = 0; index < 5; index += 1) {
+      await swipeLocator(focusedCard(), { dx: -170 })
+    }
+    await expect(page.getByRole('heading', { name: /6\. Leg Extension/ })).toBeVisible()
+    await expect(page.locator('.focus-nav em')).toHaveText('6/6')
+
+    await swipeLocator(focusedCard(), { dx: -170 })
+    await expect(page.getByRole('heading', { name: /6\. Leg Extension/ })).toBeVisible()
+
+    await focusedCard().getByRole('button', { name: 'Exit' }).click()
+    await expect(page.locator('article.exercise-card')).toHaveCount(6)
+  })
+
   test('first-session micro-spotlights replace each other through logging flow', async ({ page }) => {
     await mockDateAndReset(page, '2026-05-18T12:00:00-05:00')
     await completeSpotlightTour(page)
@@ -296,12 +384,15 @@ test.describe('Performance Tracker critical flows', () => {
     await openMondayWorkout(page)
     await startWorkout(page)
     await page.getByLabel('Start High-Bar Box Squat rest timer').click()
+    await page.locator('.timer-box').first().scrollIntoViewIfNeeded()
+    await expect(page.locator('.floating-timer-widget')).toBeVisible()
+    await expect(page.locator('.floating-timer-widget')).not.toContainText('Rest')
     await page.clock.fastForward(121_000)
 
     await expect(page.getByRole('heading', { name: 'Back in.' })).toBeVisible()
     await expect(page.getByText('REST COMPLETE')).toBeVisible()
     await expect(page.getByText('High-Bar Box Squat • Set 1/4')).toBeVisible()
-    await page.getByRole('button', { name: 'Resume' }).click()
+    await page.getByRole('button', { name: 'Dismiss' }).click()
     await expect(page.getByRole('heading', { name: 'Back in.' })).toHaveCount(0)
     await page.clock.fastForward(2_000)
     await expect(page.getByRole('heading', { name: 'Back in.' })).toHaveCount(0)
@@ -428,7 +519,8 @@ test.describe('Performance Tracker critical flows', () => {
     await expect(page.getByText('Reset workout history only?')).toBeVisible()
     await page.getByRole('button', { name: 'Continue' }).click()
     await page.getByRole('button', { name: 'Confirm Reset' }).click()
-    await expect(page.getByRole('heading', { name: 'Want the quick walkthrough again?' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'First time here?' })).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: 'Utilities' })).toHaveCount(0)
   })
 
   test('export backup downloads valid persisted app state', async ({ page }) => {
@@ -472,12 +564,16 @@ test.describe('Performance Tracker critical flows', () => {
     await expect(page.locator('.max-tile').filter({ hasText: 'Box squat' })).toContainText('340')
   })
 
-  test('reset everything clears history and restores default training maxes', async ({ page }) => {
+  test('reset everything clears history, restores default maxes, and returns to first-run onboarding', async ({ page }) => {
     await openMondayWorkout(page)
     await editBoxSquatMax(page, 340)
     await completeMondayBoxSquatWorkout(page)
 
-    await runResetFlow(page, 'everything')
+    await runResetFlow(page, 'everything', { skipFreshTour: false })
+    await page.getByRole('button', { name: 'Start Tour' }).click()
+    await expect(page.getByRole('heading', { name: 'Start with pace.' })).toBeVisible()
+    await assertTourCardFullyVisible(page)
+    await page.locator('.tour-anchor-card').getByRole('button', { name: 'Skip' }).click()
 
     await page.getByRole('button', { name: 'Progress', exact: true }).click()
     await expect(page.getByText('No completed sessions yet.')).toBeVisible()
@@ -513,7 +609,7 @@ test.describe('Performance Tracker critical flows', () => {
     ))
     await page.getByRole('button', { name: 'Close' }).click()
 
-    await page.getByRole('navigation', { name: 'Workout days' }).getByRole('button', { name: 'Mon' }).click()
+    await page.getByRole('navigation', { name: 'Choose another workout day' }).getByRole('button', { name: 'Mon' }).click()
     await expect(page.getByRole('heading', { name: "Today's session is already completed." })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Start New Session Anyway' })).toBeVisible()
     await page.getByRole('button', { name: 'Start New Session Anyway' }).click()

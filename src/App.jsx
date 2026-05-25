@@ -106,7 +106,7 @@ const spotlightTourSteps = [
     target: 'session-timer',
     eyebrow: 'Clock',
     title: 'Start with pace.',
-    body: 'Start here. The clock keeps the session honest.',
+    body: 'No need to watch the clock. It\'s right here.',
   },
   {
     target: 'readiness-control',
@@ -118,13 +118,13 @@ const spotlightTourSteps = [
     target: 'training-maxes',
     eyebrow: 'Maxes',
     title: 'Set your baseline.',
-    body: 'Maxes shape the first targets.',
+    body: 'Adjust your max lifts to tailor the workout to you.',
   },
   {
     target: 'log-exercise',
     eyebrow: 'Logging',
     title: 'Save the work.',
-    body: 'After logging your sets, tap here to save the exercise.',
+    body: 'Done with your sets? Tap here to save the exercise.',
   },
   {
     target: 'finish-session',
@@ -640,6 +640,33 @@ const shouldPromptCompleteAfterLog = ({ focusMode, idx, total }) => (
 const getFocusTransitionClass = (focusMode) => (
   focusMode ? 'exercise-list focus-fade-stage' : 'exercise-list'
 )
+
+const FOCUS_SWIPE_MIN_DISTANCE = 72
+const FOCUS_SWIPE_INTENT_DISTANCE = 18
+const FOCUS_SWIPE_AXIS_RATIO = 1.5
+
+const focusSwipeBlockSelector = [
+  'input',
+  'select',
+  'textarea',
+  'button',
+  'a',
+  'label',
+  '[role="button"]',
+  '[contenteditable="true"]',
+  '.focus-card-toolbar',
+  '.timer-box',
+  '.rest-control-row',
+  '.set-table',
+  '.form-grid',
+  '.field',
+  '.sprint-grid',
+  '.checklist-log',
+  '.check-field',
+  '.complete-nudge',
+].join(',')
+
+const isFocusSwipeBlockedTarget = (target) => Boolean(target?.closest?.(focusSwipeBlockSelector))
 
 const upsertSessionExerciseLog = (logs, entry) => [
   entry,
@@ -1965,7 +1992,6 @@ const runHelperTests = () => {
   const focusFadeClass = getFocusTransitionClass(true)
   const dayFocusState = { Monday: 3, Saturday: 1 }
   const resetEverythingState = buildFreshTrackerState({ prs: { ...defaultPRs, boxSquat: 405 }, keepPrs: false, dateKey: '2026-05-18' })
-  const resetHistoryOnlyState = buildFreshTrackerState({ prs: { ...defaultPRs, boxSquat: 405 }, keepPrs: true, dateKey: '2026-05-18' })
   const resetHistoryCopy = getResetCopy('history', 1)
   const resetEverythingCopy = getResetCopy('everything', 1)
   const resetHistoryConfirmCopy = getResetCopy('history', 2)
@@ -1997,6 +2023,10 @@ const runHelperTests = () => {
   const duplicateHiddenAlert = getRestTimerAlertCandidate({ 'Monday-0': expiredRestTimer }, 3000, { 'Monday-0': getTimerAlertToken(expiredRestTimer) })
   const defaultTourState = createDefaultTourState()
   const skippedTourState = markTourSkipped(defaultTourState)
+  const resetHistoryOnlyState = {
+    ...buildFreshTrackerState({ prs: { ...defaultPRs, boxSquat: 405 }, keepPrs: true, dateKey: '2026-05-18' }),
+    tourState: skippedTourState,
+  }
   const startedTourState = markTourStarted(defaultTourState)
   const completedTourState = markTourCompleted(startedTourState, '2026-05-18T12:00:00.000Z')
   const hintedTourState = {
@@ -2145,7 +2175,8 @@ const runHelperTests = () => {
     { name: 'tour card can position above low targets', pass: aboveTourLayout.placement === 'above' },
     { name: 'Done marks tour complete', pass: Boolean(completedTourState.tourCompletedAt) && !shouldShowFirstUseTourPrompt(completedTourState) },
     { name: 'Replay App Tour can reset tour state', pass: markTourStarted(createDefaultTourState()).hasSeenTour && !markTourStarted(createDefaultTourState()).skippedTour },
-    { name: 'Reset flow asks whether to show tour again', pass: resetHistoryOnlyState.tourState.tourVersion === TOUR_VERSION && shouldShowFirstUseTourPrompt(resetHistoryOnlyState.tourState) },
+    { name: 'Reset History Only preserves tour state', pass: !shouldShowFirstUseTourPrompt(resetHistoryOnlyState.tourState) },
+    { name: 'Reset Everything restores first-launch tour state', pass: shouldShowFirstUseTourPrompt(resetEverythingState.tourState) },
     { name: 'tour cards no longer have large blank bottom spacing', pass: true },
     { name: 'contextual hints only appear once', pass: hasSeenCoachNudge(hintedTourState, 'load-entry') && !hasSeenCoachNudge(hintedTourState, 'rest-timer') },
     { name: 'coach nudge dismissal updates only hint history', pass: hasSeenCoachNudge(markCoachNudgeSeen(completedTourState, 'rest-timer', '2026-05-18T12:02:00.000Z'), 'rest-timer') },
@@ -2213,15 +2244,18 @@ export default function WorkoutTrackerApp() {
   const [activeMicroHint, setActiveMicroHint] = useState(null)
   const [microHintLayout, setMicroHintLayout] = useState(() => getTourCardLayout(null))
   const [tourRecoveryStartDay, setTourRecoveryStartDay] = useState(null)
-  const [showPostResetTourPrompt, setShowPostResetTourPrompt] = useState(false)
   const [showTests, setShowTests] = useState(false)
   const [isSessionTimerVisible, setIsSessionTimerVisible] = useState(true)
+  const [focusSwipeDirection, setFocusSwipeDirection] = useState(null)
+  const [visibleRestTimerId, setVisibleRestTimerId] = useState(null)
   const didHydrateTimersRef = useRef(false)
   const exerciseRefs = useRef({})
   const tourTargetRefs = useRef({})
   const sessionTimerRef = useRef(null)
   const importInputRef = useRef(null)
   const storagePersistRef = useRef('')
+  const swipeGestureRef = useRef(null)
+  const focusSwipeFeedbackTimerRef = useRef(null)
   const activeSnapshotPersistRef = useRef({ key: '', serialized: '', persistedAt: 0 })
 
   const session = weeklyPlan[day]
@@ -2335,6 +2369,10 @@ export default function WorkoutTrackerApp() {
     if (!focusMode) return
     scrollToExercise(focusIdx)
   }, [focusMode, focusIdx, day, scrollToExercise])
+
+  useEffect(() => () => {
+    if (focusSwipeFeedbackTimerRef.current) window.clearTimeout(focusSwipeFeedbackTimerRef.current)
+  }, [])
 
   useEffect(() => {
     try {
@@ -2505,10 +2543,75 @@ export default function WorkoutTrackerApp() {
     })
   }
 
-  const moveFocus = (direction) => {
+  const moveFocus = (direction, { feedback = true } = {}) => {
     const nextIdx = Math.min(session.exercises.length - 1, Math.max(0, focusIdx + direction))
+    if (nextIdx === focusIdx) return false
+    if (feedback) {
+      setFocusSwipeDirection(direction > 0 ? 'next' : 'previous')
+      if (focusSwipeFeedbackTimerRef.current) window.clearTimeout(focusSwipeFeedbackTimerRef.current)
+      focusSwipeFeedbackTimerRef.current = window.setTimeout(() => {
+        setFocusSwipeDirection(null)
+      }, getPrefersReducedMotion() ? 80 : 220)
+    }
     setFocusIdx(nextIdx)
     scrollToExercise(nextIdx)
+    return true
+  }
+
+  const beginFocusSwipe = (event) => {
+    if (!focusMode || event.button > 0 || isFocusSwipeBlockedTarget(event.target)) return
+    swipeGestureRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      lastX: event.clientX,
+      lastY: event.clientY,
+      horizontalIntent: false,
+      verticalIntent: false,
+    }
+  }
+
+  const updateFocusSwipe = (event) => {
+    const gesture = swipeGestureRef.current
+    if (!gesture || gesture.pointerId !== event.pointerId) return
+
+    const dx = event.clientX - gesture.startX
+    const dy = event.clientY - gesture.startY
+    const absX = Math.abs(dx)
+    const absY = Math.abs(dy)
+    gesture.lastX = event.clientX
+    gesture.lastY = event.clientY
+
+    if (!gesture.horizontalIntent && !gesture.verticalIntent) {
+      if (absY > 12 && absY > absX * 1.15) gesture.verticalIntent = true
+      if (absX > FOCUS_SWIPE_INTENT_DISTANCE && absX > absY * 1.35) gesture.horizontalIntent = true
+    }
+
+    if (gesture.horizontalIntent) event.preventDefault()
+  }
+
+  const endFocusSwipe = (event) => {
+    const gesture = swipeGestureRef.current
+    if (!gesture || gesture.pointerId !== event.pointerId) return
+
+    const dx = (gesture.lastX ?? event.clientX) - gesture.startX
+    const dy = (gesture.lastY ?? event.clientY) - gesture.startY
+    const absX = Math.abs(dx)
+    const absY = Math.abs(dy)
+    swipeGestureRef.current = null
+
+    if (
+      gesture.horizontalIntent
+      && !gesture.verticalIntent
+      && absX >= FOCUS_SWIPE_MIN_DISTANCE
+      && absX > absY * FOCUS_SWIPE_AXIS_RATIO
+    ) {
+      moveFocus(dx < 0 ? 1 : -1)
+    }
+  }
+
+  const cancelFocusSwipe = (event) => {
+    if (swipeGestureRef.current?.pointerId === event.pointerId) swipeGestureRef.current = null
   }
 
   const resetTimer = (duration) => createTimer(duration)
@@ -2642,6 +2745,7 @@ export default function WorkoutTrackerApp() {
 
   const resetAllHistory = (keepPrs) => {
     const freshState = buildFreshTrackerState({ prs, keepPrs })
+    const nextTourState = keepPrs ? tourState : freshState.tourState
     setPrs(freshState.prs)
     setDay(freshState.day)
     setWorkoutDate(freshState.workoutDate)
@@ -2675,10 +2779,9 @@ export default function WorkoutTrackerApp() {
     setReviewBriefingSummary(false)
     setEditingMaxKey(null)
     setEditingMaxValue('')
-    setTourState(freshState.tourState)
+    setTourState(nextTourState)
     setTourMode(null)
     setTourStepIndex(0)
-    setShowPostResetTourPrompt(true)
     setResetFlow({ open: false, step: 1, mode: 'history', confirmText: '' })
     setShowUtilities(false)
   }
@@ -2846,6 +2949,7 @@ export default function WorkoutTrackerApp() {
     [activeExercise, activeExerciseRawDraft, activeExerciseWeight],
   )
   const activeRestTimer = getActiveRestTimer(restTimers, now, day)
+  const showFloatingRestTimer = Boolean(activeRestTimer && visibleRestTimerId !== activeRestTimer.id)
 
   const nextExercise = session.exercises[focusIdx + 1] || null
   const currentCompletionSummary = completionSummary?.sessionId === sessionId
@@ -2938,6 +3042,47 @@ export default function WorkoutTrackerApp() {
   })
 
   useEffect(() => {
+    if (!activeRestTimer?.id) {
+      const frame = window.requestAnimationFrame(() => setVisibleRestTimerId(null))
+      return () => window.cancelAnimationFrame(frame)
+    }
+
+    const selector = `[data-rest-timer-id="${activeRestTimer.id}"]`
+    const timerNode = document.querySelector(selector)
+    if (!timerNode) {
+      const frame = window.requestAnimationFrame(() => setVisibleRestTimerId(null))
+      return () => window.cancelAnimationFrame(frame)
+    }
+
+    const setVisibilityFromRect = () => {
+      const rect = timerNode.getBoundingClientRect()
+      const isVisible = rect.bottom > 0
+        && rect.right > 0
+        && rect.top < window.innerHeight
+        && rect.left < window.innerWidth
+      setVisibleRestTimerId(isVisible ? activeRestTimer.id : null)
+    }
+
+    if (typeof IntersectionObserver !== 'function') {
+      const frame = window.requestAnimationFrame(setVisibilityFromRect)
+      window.addEventListener('scroll', setVisibilityFromRect, { passive: true })
+      window.addEventListener('resize', setVisibilityFromRect)
+      return () => {
+        window.cancelAnimationFrame(frame)
+        window.removeEventListener('scroll', setVisibilityFromRect)
+        window.removeEventListener('resize', setVisibilityFromRect)
+      }
+    }
+
+    const observer = new IntersectionObserver(([entry]) => {
+      setVisibleRestTimerId(entry?.isIntersecting ? activeRestTimer.id : null)
+    }, { threshold: 0.25 })
+
+    observer.observe(timerNode)
+    return () => observer.disconnect()
+  }, [activeRestTimer?.id, focusIdx])
+
+  useEffect(() => {
     try {
       if (activeWorkoutSnapshot?.sessionStatus === 'completed' || !activeWorkoutSnapshot) {
         window.localStorage.removeItem(ACTIVE_WORKOUT_SNAPSHOT_KEY)
@@ -3022,7 +3167,6 @@ export default function WorkoutTrackerApp() {
     setTourState((prev) => markTourStarted(prev))
     setTourStepIndex(0)
     setTourMode('spotlight')
-    setShowPostResetTourPrompt(false)
     setShowUtilities(false)
   }
 
@@ -3030,7 +3174,6 @@ export default function WorkoutTrackerApp() {
     setTourState((prev) => markTourSkipped(prev))
     setTourMode(null)
     setTourRecoveryStartDay(null)
-    setShowPostResetTourPrompt(false)
   }
 
   const completeTour = () => {
@@ -3053,7 +3196,7 @@ export default function WorkoutTrackerApp() {
 
   const resetCopy = getResetCopy(resetFlow.mode, resetFlow.step)
   const canShowContextHints = Boolean(tourState.tourCompletedAt)
-  const showTourPrompt = !showPostResetTourPrompt && tourMode === null && shouldShowFirstUseTourPrompt(tourState)
+  const showTourPrompt = tourMode === null && shouldShowFirstUseTourPrompt(tourState)
   const shouldShowContextHint = (hintId) => canShowContextHints && !hasSeenCoachNudge(tourState, hintId)
   const getTourTargetClass = (target) => activeTourTarget === target ? ' tour-highlight' : ''
   const getMicroHintTargetClass = (target) => activeMicroHint?.target === target && tourMode !== 'spotlight' ? ' micro-spotlight-target' : ''
@@ -3321,7 +3464,7 @@ export default function WorkoutTrackerApp() {
         <section className="floating-timer-widget" aria-label="Active workout timer">
           <span>Session</span>
           <strong>{formatTime(sessionRemaining)}</strong>
-          {activeRestTimer && <em>Rest {formatTime(activeRestTimer.remaining)}</em>}
+          {showFloatingRestTimer && <em>Rest {formatTime(activeRestTimer.remaining)}</em>}
         </section>
       )}
 
@@ -3426,13 +3569,21 @@ export default function WorkoutTrackerApp() {
           const lastExerciseLog = sessionLog.find((entry) => entry.exercise === exercise.name && entry.sessionId !== sessionId)
 
           return (
-            <article key={id} ref={(node) => { exerciseRefs.current[id] = node }} className={`card exercise-card${focusMode ? ' focused-exercise-card' : ''}`}>
+            <article
+              key={id}
+              ref={(node) => { exerciseRefs.current[id] = node }}
+              className={`card exercise-card${focusMode ? ' focused-exercise-card' : ''}${focusMode && focusSwipeDirection ? ` focus-swipe-${focusSwipeDirection}` : ''}`}
+              onPointerDown={focusMode ? beginFocusSwipe : undefined}
+              onPointerMove={focusMode ? updateFocusSwipe : undefined}
+              onPointerUp={focusMode ? endFocusSwipe : undefined}
+              onPointerCancel={focusMode ? cancelFocusSwipe : undefined}
+            >
               <div className="card-content stack">
                 {focusMode && (
                   <div className="focus-card-toolbar" aria-label="Focused workout view">
                     <div className="focus-presence">
                       <span aria-hidden="true" />
-                      <strong>Focus Mode On</strong>
+                      <strong>Focus Mode</strong>
                     </div>
                     <nav className="focus-nav" aria-label="Focus navigation">
                       <button type="button" onClick={() => moveFocus(-1)} aria-label="Previous exercise">‹</button>
@@ -3472,7 +3623,7 @@ export default function WorkoutTrackerApp() {
                 )}
 
                 {restSeconds > 0 && (
-                  <div className="timer-box stack tight">
+                  <div className="timer-box stack tight" data-rest-timer-id={id}>
                     <div className="split-row">
                       <p className="metric compact"><Icon name="timer" /> Rest Timer</p>
                       <span className="timer-readout">{formatTime(timerValue)}</span>
@@ -4232,20 +4383,6 @@ export default function WorkoutTrackerApp() {
         </>
       )}
 
-      {showPostResetTourPrompt && tourMode === null && (
-        <div className="tour-overlay" role="dialog" aria-modal="true" aria-labelledby="reset-tour-title">
-          <div className="tour-card welcome">
-            <p className="eyebrow">Fresh start</p>
-            <h2 id="reset-tour-title">Want the quick walkthrough again?</h2>
-            <p>A short reset before your next session.</p>
-            <div className="button-row">
-              <button type="button" className="button primary grow" onClick={startTour}>Show me</button>
-              <button type="button" className="button secondary grow" onClick={skipTour}>No thanks</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {restTimerOverlay && (
         <div
           className="timer-complete-overlay"
@@ -4266,7 +4403,7 @@ export default function WorkoutTrackerApp() {
             </p>
             <div className="timer-complete-actions">
               <button type="button" className="button primary full" onClick={startNextSetFromOverlay}>
-                Resume
+                Dismiss
               </button>
               <button type="button" className="button ghost" onClick={addThirtySecondsToRestTimer}>
                 +30 sec

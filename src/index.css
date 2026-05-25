@@ -1116,7 +1116,7 @@ h3 {
 
 .focus-card-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(2.85rem, 1fr);
+  grid-template-columns: minmax(3.4rem, 1fr) auto minmax(3.4rem, 1fr);
   align-items: center;
   gap: 0.5rem;
   min-height: 1.85rem;
@@ -1126,7 +1126,9 @@ h3 {
 
 .focus-presence {
   display: inline-flex;
+  justify-self: start;
   min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: 0.38rem;
   color: #99f6e4;
@@ -1150,6 +1152,7 @@ h3 {
 .focus-nav {
   display: inline-flex;
   flex: 0 0 auto;
+  justify-self: center;
   align-items: center;
   justify-content: center;
   gap: 0.08rem;
@@ -1190,7 +1193,7 @@ h3 {
 .focus-exit {
   flex: 0 0 auto;
   justify-self: end;
-  min-width: 2.85rem;
+  min-width: 3.4rem;
   color: #7dd3c7;
   font-size: 0.68rem;
   background: rgba(20, 184, 166, 0.04);
@@ -1207,6 +1210,7 @@ h3 {
 
 .focused-exercise-card {
   position: relative;
+  touch-action: pan-y;
   border-color: rgba(94, 234, 212, 0.32);
   background: linear-gradient(180deg, rgba(8, 22, 18, 0.98), rgba(5, 18, 15, 0.96));
   box-shadow: 0 18px 42px rgba(0, 0, 0, 0.34), 0 0 0 1px rgba(94, 234, 212, 0.07), 0 0 42px rgba(20, 184, 166, 0.08);
@@ -1225,6 +1229,14 @@ h3 {
   animation: focus-fade-in 180ms ease-out both;
   transform-origin: center;
   will-change: opacity, transform;
+}
+
+.focus-fade-stage .exercise-card.focus-swipe-next {
+  animation-name: focus-swipe-next;
+}
+
+.focus-fade-stage .exercise-card.focus-swipe-previous {
+  animation-name: focus-swipe-previous;
 }
 
 .complete-nudge {
@@ -2373,6 +2385,28 @@ h3 {
   to {
     opacity: 1;
     transform: scale(1);
+  }
+}
+
+@keyframes focus-swipe-next {
+  from {
+    opacity: 0;
+    transform: translateX(0.8rem) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes focus-swipe-previous {
+  from {
+    opacity: 0;
+    transform: translateX(-0.8rem) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
   }
 }
 
